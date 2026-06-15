@@ -90,17 +90,23 @@ function renderForm(){
 
     <div class="field">
       <label class="q">姓名<span class="req">必須</span></label>
-      <input id="name" type="text" placeholder="多胡 太郎">
+      <div class="opts">
+        <input id="lastName" type="text" placeholder="姓（例：鈴木）" style="flex:1 1 0;min-width:0">
+        <input id="firstName" type="text" placeholder="名（例：雄太）" style="flex:1 1 0;min-width:0">
+      </div>
     </div>
 
     <div class="field">
       <label class="q">フリガナ<span class="req">必須</span></label>
-      <input id="kana" type="text" placeholder="タゴ タロウ">
+      <div class="opts">
+        <input id="kanaLast" type="text" placeholder="セイ（例：スズキ）" style="flex:1 1 0;min-width:0">
+        <input id="kanaFirst" type="text" placeholder="メイ（例：ユウタ）" style="flex:1 1 0;min-width:0">
+      </div>
     </div>
 
     <div class="field">
       <label class="q">携帯番号<span class="req">必須</span></label>
-      <input id="phone" type="tel" inputmode="tel" placeholder="090-1234-5678">
+      <input id="phone" type="tel" inputmode="numeric" maxlength="11" placeholder="08012345678（ハイフン無し11桁）" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
     </div>
 
     <div class="field">
@@ -181,9 +187,9 @@ function toggleCompany(){
 }
 
 async function submitForm(){
-  if(!val('name') || !val('kana') || !val('phone')){
-    alert('姓名・フリガナ・携帯番号は必須です。'); return;
-  }
+  if(!val('lastName') || !val('firstName')){ alert('姓名（姓・名の両方）を入力してください。'); return; }
+  if(!val('kanaLast') || !val('kanaFirst')){ alert('フリガナ（セイ・メイの両方）を入力してください。'); return; }
+  if(!/^\d{11}$/.test(val('phone'))){ alert('携帯番号はハイフンなしの数字11桁で入力してください。'); return; }
   if(!radio('join')){ alert('参加の有無を選んでください。'); return; }
   if(radio('join')==='参加する'){
     if(!val('birth')){ alert('生年月日を入力してください。'); return; }
@@ -196,14 +202,17 @@ async function submitForm(){
     }
   }
 
+  const fullName = val('lastName') + ' ' + val('firstName');
+  const fullKana = val('kanaLast') + ' ' + val('kanaFirst');
+
   const data = {
     secret:      SECRET,
     userId:      profile.userId,
     displayName: profile.displayName,
     phone:       val('phone'),
     email:       val('email'),
-    name:        val('name'),
-    kana:        val('kana'),
+    name:        fullName,
+    kana:        fullKana,
     join:        radio('join'),
     birth:       radio('join')==='参加する' ? val('birth') : '',
     firstTime:   radio('join')==='参加する' ? radio('first') : '',
