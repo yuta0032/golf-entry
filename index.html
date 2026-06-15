@@ -27,12 +27,12 @@
   .field{margin-bottom:18px}
   label.q{display:block; font-weight:600; font-size:14px; margin-bottom:7px}
   .req{color:var(--bad); font-size:12px; margin-left:4px}
-  input[type=text],input[type=email],input[type=date],input[type=tel],textarea{
+  input[type=text],input[type=email],input[type=date],input[type=tel],select,textarea{
     width:100%; padding:11px 12px; font-size:16px; color:var(--ink);
     border:1px solid var(--line); border-radius:10px; background:#fff;
   }
   textarea{min-height:80px; resize:vertical}
-  input:focus,textarea:focus{outline:2px solid var(--green); border-color:var(--green)}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--green); border-color:var(--green)}
   .opts{display:flex; gap:8px; flex-wrap:wrap}
   .opt{flex:1 1 0; min-width:120px}
   .opt input{position:absolute; opacity:0; pointer-events:none}
@@ -71,9 +71,14 @@
 </div>
 
 <script>
+/* ============================================================
+   ここの2つを自分の値に書き換える
+   ============================================================ */
 const LIFF_ID = '2010392345-WMpqQivB';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzVfEJMWakJbssH2pRQQ8NesAy0UX9lGO4IB3Jh59VWoDsr62HHdWIkc4A8jbt1rZZe3Q/exec';
-const SECRET  = 'tagocup-x7k2q9m4';
+const SECRET  = 'tagocup-x7k2q9m4';   // ★ gas-backend.gs と同じ文字列にする
+const EVENT_NO = 61;   // ★ 多胡杯の回数。次回はここを 62 に変えるだけ
+/* ============================================================ */
 
 let profile = { userId:'', displayName:'' };
 
@@ -81,13 +86,12 @@ async function main(){
   await liff.init({ liffId: LIFF_ID });
   if(!liff.isLoggedIn()){ liff.login(); return; }
   profile = await liff.getProfile();
+  document.querySelector('header p').textContent = '第' + EVENT_NO + '回 参加登録';
   renderForm();
 }
 
 function renderForm(){
   document.getElementById('app').innerHTML = `
-    <div class="who">LINEアカウント：<b>${escapeHtml(profile.displayName)}</b> として登録します</div>
-
     <div class="field">
       <label class="q">姓名<span class="req">必須</span></label>
       <div class="opts">
@@ -125,7 +129,11 @@ function renderForm(){
     <div id="detail" class="hidden">
       <div class="field">
         <label class="q">生年月日（西暦）<span class="req">必須</span></label>
-        <input id="birth" type="date">
+        <div class="opts">
+          <select id="birthY" style="flex:2 1 0;min-width:0"></select>
+          <select id="birthM" style="flex:1 1 0;min-width:0"></select>
+          <select id="birthD" style="flex:1 1 0;min-width:0"></select>
+        </div>
       </div>
 
       <div class="field">
@@ -170,6 +178,20 @@ function renderForm(){
     <button id="btn" class="submit" onclick="submitForm()">登録する</button>
     <p class="note">送信後に内容を変更したい場合は、もう一度開いて再送信してください。</p>
   `;
+  fillBirthOptions();
+}
+
+function fillBirthOptions(){
+  const now = new Date().getFullYear();
+  let y = '<option value="">年</option>';
+  for(let i=now;i>=1930;i--){ y += '<option value="'+i+'">'+i+'</option>'; }
+  document.getElementById('birthY').innerHTML = y;
+  let m = '<option value="">月</option>';
+  for(let i=1;i<=12;i++){ m += '<option value="'+i+'">'+i+'</option>'; }
+  document.getElementById('birthM').innerHTML = m;
+  let d = '<option value="">日</option>';
+  for(let i=1;i<=31;i++){ d += '<option value="'+i+'">'+i+'</option>'; }
+  document.getElementById('birthD').innerHTML = d;
 }
 
 function val(id){ const el=document.getElementById(id); return el?el.value.trim():''; }
@@ -187,12 +209,13 @@ function toggleCompany(){
 }
 
 async function submitForm(){
+  // 必須チェック（任意は「メール」と「備考」のみ。条件で表示される項目は表示時のみ必須）
   if(!val('lastName') || !val('firstName')){ alert('姓名（姓・名の両方）を入力してください。'); return; }
   if(!val('kanaLast') || !val('kanaFirst')){ alert('フリガナ（セイ・メイの両方）を入力してください。'); return; }
   if(!/^\d{11}$/.test(val('phone'))){ alert('携帯番号はハイフンなしの数字11桁で入力してください。'); return; }
   if(!radio('join')){ alert('参加の有無を選んでください。'); return; }
   if(radio('join')==='参加する'){
-    if(!val('birth')){ alert('生年月日を入力してください。'); return; }
+    if(!val('birthY') || !val('birthM') || !val('birthD')){ alert('生年月日を選んでください。'); return; }
     if(!radio('first')){ alert('「初参加ですか？」を選んでください。'); return; }
     if(radio('first')==='はい' && !val('referrer')){ alert('紹介者を入力してください。'); return; }
     if(!radio('company')){ alert('「会社としての参加ですか？」を選んでください。'); return; }
@@ -204,9 +227,13 @@ async function submitForm(){
 
   const fullName = val('lastName') + ' ' + val('firstName');
   const fullKana = val('kanaLast') + ' ' + val('kanaFirst');
+  const birthStr = (radio('join')==='参加する')
+    ? (val('birthY') + '-' + ('0'+val('birthM')).slice(-2) + '-' + ('0'+val('birthD')).slice(-2))
+    : '';
 
   const data = {
     secret:      SECRET,
+    eventNo:     EVENT_NO,
     userId:      profile.userId,
     displayName: profile.displayName,
     phone:       val('phone'),
@@ -214,7 +241,7 @@ async function submitForm(){
     name:        fullName,
     kana:        fullKana,
     join:        radio('join'),
-    birth:       radio('join')==='参加する' ? val('birth') : '',
+    birth:       birthStr,
     firstTime:   radio('join')==='参加する' ? radio('first') : '',
     referrer:    radio('first')==='はい' ? val('referrer') : '',
     company:     radio('join')==='参加する' ? radio('company') : '',
@@ -227,6 +254,7 @@ async function submitForm(){
   btn.disabled = true; btn.textContent = '送信中…';
 
   try{
+    // text/plain で送るとCORSのプリフライトを避けられる（GAS向けの定番）
     await fetch(GAS_URL, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' },
@@ -234,6 +262,7 @@ async function submitForm(){
     });
     showDone();
   }catch(err){
+    // 多くの場合データ自体は書き込まれているが、念のため案内
     showDone();
   }
 }
