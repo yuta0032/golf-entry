@@ -27,7 +27,7 @@
   .field{margin-bottom:18px}
   label.q{display:block; font-weight:600; font-size:14px; margin-bottom:7px}
   .req{color:var(--bad); font-size:12px; margin-left:4px}
-  input[type=text],input[type=email],input[type=date],textarea{
+  input[type=text],input[type=email],input[type=date],input[type=tel],textarea{
     width:100%; padding:11px 12px; font-size:16px; color:var(--ink);
     border:1px solid var(--line); border-radius:10px; background:#fff;
   }
@@ -89,11 +89,6 @@ function renderForm(){
     <div class="who">LINEアカウント：<b>${escapeHtml(profile.displayName)}</b> として登録します</div>
 
     <div class="field">
-      <label class="q">メールアドレス<span class="req">必須</span></label>
-      <input id="email" type="email" inputmode="email" placeholder="example@mail.com">
-    </div>
-
-    <div class="field">
       <label class="q">姓名<span class="req">必須</span></label>
       <input id="name" type="text" placeholder="多胡 太郎">
     </div>
@@ -101,6 +96,16 @@ function renderForm(){
     <div class="field">
       <label class="q">フリガナ<span class="req">必須</span></label>
       <input id="kana" type="text" placeholder="タゴ タロウ">
+    </div>
+
+    <div class="field">
+      <label class="q">携帯番号<span class="req">必須</span></label>
+      <input id="phone" type="tel" inputmode="tel" placeholder="090-1234-5678">
+    </div>
+
+    <div class="field">
+      <label class="q">メールアドレス（任意）</label>
+      <input id="email" type="email" inputmode="email" placeholder="example@mail.com">
     </div>
 
     <div class="field">
@@ -113,35 +118,35 @@ function renderForm(){
 
     <div id="detail" class="hidden">
       <div class="field">
-        <label class="q">生年月日（西暦）</label>
+        <label class="q">生年月日（西暦）<span class="req">必須</span></label>
         <input id="birth" type="date">
       </div>
 
       <div class="field">
-        <label class="q">初参加ですか？</label>
+        <label class="q">初参加ですか？<span class="req">必須</span></label>
         <div class="opts">
-          <label class="opt"><input type="radio" name="first" value="初参加" onchange="toggleFirst()"><span>初参加</span></label>
-          <label class="opt"><input type="radio" name="first" value="経験あり" onchange="toggleFirst()"><span>参加経験あり</span></label>
+          <label class="opt"><input type="radio" name="first" value="はい" onchange="toggleFirst()"><span>はい</span></label>
+          <label class="opt"><input type="radio" name="first" value="いいえ" onchange="toggleFirst()"><span>いいえ</span></label>
         </div>
         <div id="referrerBox" class="sub hidden field">
-          <label class="q">紹介者のお名前</label>
+          <label class="q">紹介者のお名前<span class="req">必須</span></label>
           <input id="referrer" type="text" placeholder="紹介してくれた方">
         </div>
       </div>
 
       <div class="field">
-        <label class="q">会社としての参加ですか？</label>
+        <label class="q">会社としての参加ですか？<span class="req">必須</span></label>
         <div class="opts">
           <label class="opt"><input type="radio" name="company" value="会社参加" onchange="toggleCompany()"><span>はい</span></label>
           <label class="opt"><input type="radio" name="company" value="個人参加" onchange="toggleCompany()"><span>いいえ</span></label>
         </div>
         <div id="companyBox" class="sub hidden">
           <div class="field">
-            <label class="q">会社名</label>
+            <label class="q">会社名<span class="req">必須</span></label>
             <input id="companyName" type="text" placeholder="株式会社○○">
           </div>
           <div class="field">
-            <label class="q">領収書</label>
+            <label class="q">領収書<span class="req">必須</span></label>
             <div class="opts">
               <label class="opt"><input type="radio" name="receipt" value="必要"><span>必要</span></label>
               <label class="opt"><input type="radio" name="receipt" value="不要"><span>不要</span></label>
@@ -169,29 +174,40 @@ function toggleJoin(){
   document.getElementById('detail').classList.toggle('hidden', join !== '参加する');
 }
 function toggleFirst(){
-  document.getElementById('referrerBox').classList.toggle('hidden', radio('first') !== '初参加');
+  document.getElementById('referrerBox').classList.toggle('hidden', radio('first') !== 'はい');
 }
 function toggleCompany(){
   document.getElementById('companyBox').classList.toggle('hidden', radio('company') !== '会社参加');
 }
 
 async function submitForm(){
-  if(!val('email') || !val('name') || !val('kana')){
-    alert('メール・姓名・フリガナは必須です。'); return;
+  if(!val('name') || !val('kana') || !val('phone')){
+    alert('姓名・フリガナ・携帯番号は必須です。'); return;
   }
   if(!radio('join')){ alert('参加の有無を選んでください。'); return; }
+  if(radio('join')==='参加する'){
+    if(!val('birth')){ alert('生年月日を入力してください。'); return; }
+    if(!radio('first')){ alert('「初参加ですか？」を選んでください。'); return; }
+    if(radio('first')==='はい' && !val('referrer')){ alert('紹介者を入力してください。'); return; }
+    if(!radio('company')){ alert('「会社としての参加ですか？」を選んでください。'); return; }
+    if(radio('company')==='会社参加'){
+      if(!val('companyName')){ alert('会社名を入力してください。'); return; }
+      if(!radio('receipt')){ alert('領収書の要否を選んでください。'); return; }
+    }
+  }
 
   const data = {
     secret:      SECRET,
     userId:      profile.userId,
     displayName: profile.displayName,
+    phone:       val('phone'),
     email:       val('email'),
     name:        val('name'),
     kana:        val('kana'),
     join:        radio('join'),
     birth:       radio('join')==='参加する' ? val('birth') : '',
     firstTime:   radio('join')==='参加する' ? radio('first') : '',
-    referrer:    radio('first')==='初参加' ? val('referrer') : '',
+    referrer:    radio('first')==='はい' ? val('referrer') : '',
     company:     radio('join')==='参加する' ? radio('company') : '',
     companyName: radio('company')==='会社参加' ? val('companyName') : '',
     receipt:     radio('company')==='会社参加' ? radio('receipt') : '',
