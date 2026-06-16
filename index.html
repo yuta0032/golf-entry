@@ -88,6 +88,7 @@ async function main(){
   profile = await liff.getProfile();
   document.querySelector('header p').textContent = '第' + EVENT_NO + '回 参加登録';
   renderForm();
+  loadPrefill();
 }
 
 function renderForm(){
@@ -105,6 +106,14 @@ function renderForm(){
       <div class="opts">
         <input id="kanaLast" type="text" placeholder="セイ（例：スズキ）" style="flex:1 1 0;min-width:0">
         <input id="kanaFirst" type="text" placeholder="メイ（例：ユウタ）" style="flex:1 1 0;min-width:0">
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="q">性別<span class="req">必須</span></label>
+      <div class="opts">
+        <label class="opt"><input type="radio" name="gender" value="男性"><span>男性</span></label>
+        <label class="opt"><input type="radio" name="gender" value="女性"><span>女性</span></label>
       </div>
     </div>
 
@@ -196,6 +205,51 @@ function fillBirthOptions(){
 
 function val(id){ const el=document.getElementById(id); return el?el.value.trim():''; }
 function radio(name){ const el=document.querySelector('input[name="'+name+'"]:checked'); return el?el.value:''; }
+function setVal(id,v){ const el=document.getElementById(id); if(el) el.value=v; }
+function setRadio(name,v){ const el=document.querySelector('input[name="'+name+'"][value="'+v+'"]'); if(el) el.checked=true; }
+
+/* 前回回答の引き継ぎ（JSONPでGASから取得して各項目に流し込む） */
+function loadPrefill(){
+  if(!profile.userId) return;
+  window.__prefill = function(d){ try{ applyPrefill(d); }catch(e){} };
+  const s = document.createElement('script');
+  s.src = GAS_URL + '?action=prefill'
+    + '&userId='  + encodeURIComponent(profile.userId)
+    + '&secret='  + encodeURIComponent(SECRET)
+    + '&callback=__prefill';
+  s.onerror = function(){};
+  document.body.appendChild(s);
+}
+
+function applyPrefill(d){
+  if(!d || !d.name) return;
+  const nm = String(d.name).split(' ');
+  if(nm[0]) setVal('lastName', nm[0]);
+  if(nm[1]) setVal('firstName', nm.slice(1).join(' '));
+  if(d.kana){
+    const kn = String(d.kana).split(' ');
+    if(kn[0]) setVal('kanaLast', kn[0]);
+    if(kn[1]) setVal('kanaFirst', kn.slice(1).join(' '));
+  }
+  if(d.phone)  setVal('phone', String(d.phone));
+  if(d.email)  setVal('email', d.email);
+  if(d.gender) setRadio('gender', d.gender);
+  if(d.birth){
+    const b = String(d.birth).split('-');
+    if(b.length===3){
+      setVal('birthY', String(parseInt(b[0],10)));
+      setVal('birthM', String(parseInt(b[1],10)));
+      setVal('birthD', String(parseInt(b[2],10)));
+    }
+  }
+  if(d.firstTime)   setRadio('first', d.firstTime);
+  if(d.referrer)    setVal('referrer', d.referrer);
+  if(d.company)     setRadio('company', d.company);
+  if(d.companyName) setVal('companyName', d.companyName);
+  if(d.receipt)     setRadio('receipt', d.receipt);
+  toggleFirst();
+  toggleCompany();
+}
 
 function toggleJoin(){
   const join = radio('join');
@@ -213,6 +267,7 @@ async function submitForm(){
   if(!val('lastName') || !val('firstName')){ alert('姓名（姓・名の両方）を入力してください。'); return; }
   if(!val('kanaLast') || !val('kanaFirst')){ alert('フリガナ（セイ・メイの両方）を入力してください。'); return; }
   if(!/^\d{11}$/.test(val('phone'))){ alert('携帯番号はハイフンなしの数字11桁で入力してください。'); return; }
+  if(!radio('gender')){ alert('性別を選んでください。'); return; }
   if(!radio('join')){ alert('参加の有無を選んでください。'); return; }
   if(radio('join')==='参加する'){
     if(!val('birthY') || !val('birthM') || !val('birthD')){ alert('生年月日を選んでください。'); return; }
@@ -240,6 +295,7 @@ async function submitForm(){
     email:       val('email'),
     name:        fullName,
     kana:        fullKana,
+    gender:      radio('gender'),
     join:        radio('join'),
     birth:       birthStr,
     firstTime:   radio('join')==='参加する' ? radio('first') : '',
