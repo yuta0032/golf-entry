@@ -57,6 +57,7 @@
 <div class="wrap">
   <div id="app"><div class="note">読み込み中…</div></div>
 </div>
+
 <script>
 /* ============================================================
    設定：最初は ADMIN_USERID を空のままデプロイ → 自分のLINEで開くと
@@ -65,8 +66,9 @@
    ============================================================ */
 const LIFF_ID = '2010392345-WMpqQivB';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzVfEJMWakJbssH2pRQQ8NesAy0UX9lGO4IB3Jh59VWoDsr62HHdWIkc4A8jbt1rZZe3Q/exec';
-const ADMIN_USERID = 'Uf4fdbb2775ec9f55aea2e070c8252a73';   // ★ ここに自分のUserIDを貼る（最初は空）
+const ADMIN_USERID = 'Uf4fdbb2775ec9f55aea2e070c8252a73';   // ★ 設定済み
 /* ============================================================ */
+
 const app = document.getElementById('app');
 let profile = { userId:'', displayName:'' };
 let token = '';
@@ -74,15 +76,18 @@ let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
 let curQuery = '';
+
 async function main(){
   await liff.init({ liffId: LIFF_ID });
-  if(!liff.isLoggedIn()){ liff.login(); return; }
+  if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
   profile = await liff.getProfile();
   token = liff.getAccessToken();
+
   if(!ADMIN_USERID){ showSetup(); return; }
   if(profile.userId !== ADMIN_USERID){ showDenied(); return; }
   loadList();
 }
+
 function showSetup(){
   app.innerHTML =
     '<div class="setup">'
@@ -97,14 +102,17 @@ function showSetup(){
     + '</ol>'
     + '</div>';
 }
+
 function copyId(){
   navigator.clipboard.writeText(profile.userId).then(function(){
     const u=document.getElementById('uid'); if(u) u.style.borderColor='var(--green)';
   }).catch(function(){});
 }
+
 function showDenied(){
   app.innerHTML = '<div class="note">このアカウントでは管理画面を閲覧できません。<br><small style="word-break:break-all">'+escapeHtml(profile.userId)+'</small></div>';
 }
+
 function loadList(){
   window.__list = function(res){ try{ renderDash(res); }catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; } };
   const s = document.createElement('script');
@@ -112,6 +120,7 @@ function loadList(){
   s.onerror = function(){ app.innerHTML='<div class="note">データの取得に失敗しました。</div>'; };
   document.body.appendChild(s);
 }
+
 function renderDash(res){
   if(!res || res.error){ showDenied(); return; }
   allRows = res.rows || [];
@@ -119,6 +128,7 @@ function renderDash(res){
   allRows.forEach(function(r){ if(r.eventNo!=='' && r.eventNo!=null) events[r.eventNo]=true; });
   const evlist = Object.keys(events).sort(function(a,b){ return Number(b)-Number(a); });
   curEvent = evlistDefault(evlist);
+
   app.innerHTML =
     '<h1>多胡杯ゴルフコンペ 管理</h1>'
     + '<p class="sub" id="sub"></p>'
@@ -134,18 +144,23 @@ function renderDash(res){
     + '</div>'
     + '<div class="search"><input id="q" type="text" placeholder="名前・フリガナで検索" oninput="onSearch(this.value)"></div>'
     + '<div id="list"></div>';
+
+  // 回セレクトを構築
   const sel = document.getElementById('evsel');
   sel.innerHTML = evlist.map(function(e){ return '<option value="'+e+'">第'+e+'回</option>'; }).join('') || '<option value="">（データなし）</option>';
   if(curEvent) sel.value = curEvent;
   draw();
 }
+
 function evlistDefault(evlist){ return evlist.length ? evlist[0] : ''; }
+
 function onEvent(){ curEvent = document.getElementById('evsel').value; draw(); }
 function onFilter(el){
   document.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('on'); });
   el.classList.add('on'); curFilter = el.dataset.f; draw();
 }
 function onSearch(v){ curQuery = (v||'').trim(); draw(); }
+
 function draw(){
   let rows = allRows.filter(function(r){ return String(r.eventNo)===String(curEvent); });
   const nJoin = rows.filter(function(r){ return r.join==='参加する'; }).length;
@@ -153,13 +168,16 @@ function draw(){
   setText('cJoin', nJoin+'名');
   setText('cNo', nNo+'名');
   setText('sub', '第'+curEvent+'回 ・ 合計 '+rows.length+'名');
+
   if(curFilter!=='all') rows = rows.filter(function(r){ return r.join===curFilter; });
   if(curQuery) rows = rows.filter(function(r){ return ((r.name||'')+' '+(r.kana||'')).indexOf(curQuery)>-1; });
   rows.sort(function(a,b){ return String(a.kana||'').localeCompare(String(b.kana||''),'ja'); });
+
   document.getElementById('list').innerHTML = rows.length
     ? rows.map(card).join('')
     : '<div class="note">該当する人がいません。</div>';
 }
+
 function card(r){
   const joinB = r.join==='参加する' ? '<span class="b b-join">参加</span>' : '<span class="b b-no">不参加</span>';
   const gB = r.gender==='男性' ? '<span class="b b-m">男性</span>' : (r.gender==='女性' ? '<span class="b b-f">女性</span>' : '');
@@ -172,8 +190,10 @@ function card(r){
     + '<div class="meta">'+tel+co+'</div>'
     + '</div>';
 }
+
 function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
 main().catch(function(err){
   app.innerHTML='<div class="note">読み込みに失敗しました。<br><small>'+escapeHtml(String(err))+'</small></div>';
 });
