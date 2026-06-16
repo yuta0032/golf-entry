@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多胡杯ゴルフコンペ 管理画面</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --green:#2f6b3f; --green-d:#234f2f; --line:#dfe3dd;
+    --bg:#f6f7f4; --ink:#1d231e; --muted:#6b756c;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    line-height:1.6; -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:560px; margin:0 auto; padding:16px 14px 50px}
+  h1{font-size:18px; margin:0 0 2px}
+  .sub{font-size:13px; color:var(--muted); margin:0 0 14px}
+  .metrics{display:flex; gap:10px; margin-bottom:14px}
+  .metric{flex:1; background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px}
+  .metric .l{font-size:12px; color:var(--muted)}
+  .metric .v{font-size:22px; font-weight:700}
+  .row{display:flex; gap:8px; margin-bottom:12px}
+  select{width:100%; padding:10px 12px; font-size:15px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink)}
+  .chips{display:flex; gap:8px; margin-bottom:12px}
+  .chip{flex:1; text-align:center; padding:9px 0; font-size:14px; border:1px solid var(--line); border-radius:10px; background:#fff; cursor:pointer}
+  .chip.on{background:var(--green); color:#fff; border-color:var(--green); font-weight:600}
+  .search{position:relative; margin-bottom:14px}
+  .search input{width:100%; padding:10px 12px; font-size:16px; border:1px solid var(--line); border-radius:10px; background:#fff}
+  .card{background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px}
+  .card .top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px}
+  .nm{font-weight:700; font-size:15px}
+  .kn{font-size:12px; color:var(--muted)}
+  .badges{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px}
+  .b{font-size:12px; padding:3px 9px; border-radius:8px}
+  .b-join{background:#e1f5ee; color:#085041}
+  .b-no{background:#f1efe8; color:#444441}
+  .b-m{background:#e6f1fb; color:#0c447c}
+  .b-f{background:#fbeaf0; color:#72243e}
+  .b-first{background:#faeeda; color:#633806}
+  .meta{display:flex; justify-content:space-between; align-items:center; margin-top:10px}
+  .meta a{font-size:14px; color:var(--green-d); text-decoration:none; font-weight:600}
+  .meta .co{font-size:12px; color:var(--muted)}
+  .note{text-align:center; color:var(--muted); padding:50px 10px}
+  .setup{background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px 16px}
+  .setup h2{font-size:16px; margin:0 0 10px}
+  .uid{font-family:monospace; font-size:13px; word-break:break-all; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; margin:10px 0}
+  .setup button{width:100%; padding:12px; font-size:15px; font-weight:700; color:#fff; background:var(--green); border:none; border-radius:10px; cursor:pointer; margin-top:6px}
+  .setup ol{margin:14px 0 0; padding-left:20px; font-size:13px; color:var(--muted)}
+  .setup code{background:var(--bg); padding:1px 5px; border-radius:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="app"><div class="note">読み込み中…</div></div>
+</div>
+<script>
+/* ============================================================
+   設定：最初は ADMIN_USERID を空のままデプロイ → 自分のLINEで開くと
+   画面に自分のUserIDが出るので、それをここ(admin.html)とGASの
+   ADMIN_USERID 両方に貼って、再デプロイする。
+   ============================================================ */
+const LIFF_ID = '2010392345-WMpqQivB';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzVfEJMWakJbssH2pRQQ8NesAy0UX9lGO4IB3Jh59VWoDsr62HHdWIkc4A8jbt1rZZe3Q/exec';
+const ADMIN_USERID = '';   // ★ ここに自分のUserIDを貼る（最初は空）
+/* ============================================================ */
+const app = document.getElementById('app');
+let profile = { userId:'', displayName:'' };
+let token = '';
+let allRows = [];
+let curEvent = '';
+let curFilter = 'all';
+let curQuery = '';
+async function main(){
+  await liff.init({ liffId: LIFF_ID });
+  if(!liff.isLoggedIn()){ liff.login(); return; }
+  profile = await liff.getProfile();
+  token = liff.getAccessToken();
+  if(!ADMIN_USERID){ showSetup(); return; }
+  if(profile.userId !== ADMIN_USERID){ showDenied(); return; }
+  loadList();
+}
+function showSetup(){
+  app.innerHTML =
+    '<div class="setup">'
+    + '<h2>セットアップ</h2>'
+    + '<p style="font-size:13px;color:var(--muted);margin:0">あなたのLINE UserIDです。これを管理者として設定すると、以後はあなただけがこの画面を見られます。</p>'
+    + '<div class="uid" id="uid">'+escapeHtml(profile.userId)+'</div>'
+    + '<button onclick="copyId()">UserIDをコピー</button>'
+    + '<ol>'
+      + '<li><code>admin.html</code> の <code>ADMIN_USERID</code> にこのIDを貼る</li>'
+      + '<li>GASの <code>名簿用.gs</code> の <code>ADMIN_USERID</code> にも同じIDを貼る</li>'
+      + '<li>GASを再デプロイ＋admin.htmlを差し替えると、管理画面が有効になります</li>'
+    + '</ol>'
+    + '</div>';
+}
+function copyId(){
+  navigator.clipboard.writeText(profile.userId).then(function(){
+    const u=document.getElementById('uid'); if(u) u.style.borderColor='var(--green)';
+  }).catch(function(){});
+}
+function showDenied(){
+  app.innerHTML = '<div class="note">このアカウントでは管理画面を閲覧できません。<br><small style="word-break:break-all">'+escapeHtml(profile.userId)+'</small></div>';
+}
+function loadList(){
+  window.__list = function(res){ try{ renderDash(res); }catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; } };
+  const s = document.createElement('script');
+  s.src = GAS_URL + '?action=list&token=' + encodeURIComponent(token) + '&callback=__list';
+  s.onerror = function(){ app.innerHTML='<div class="note">データの取得に失敗しました。</div>'; };
+  document.body.appendChild(s);
+}
+function renderDash(res){
+  if(!res || res.error){ showDenied(); return; }
+  allRows = res.rows || [];
+  const events = {};
+  allRows.forEach(function(r){ if(r.eventNo!=='' && r.eventNo!=null) events[r.eventNo]=true; });
+  const evlist = Object.keys(events).sort(function(a,b){ return Number(b)-Number(a); });
+  curEvent = evlistDefault(evlist);
+  app.innerHTML =
+    '<h1>多胡杯ゴルフコンペ 管理</h1>'
+    + '<p class="sub" id="sub"></p>'
+    + '<div class="row"><select id="evsel" onchange="onEvent()"></select></div>'
+    + '<div class="metrics">'
+      + '<div class="metric"><div class="l">参加</div><div class="v" id="cJoin">0</div></div>'
+      + '<div class="metric"><div class="l">不参加</div><div class="v" id="cNo">0</div></div>'
+    + '</div>'
+    + '<div class="chips">'
+      + '<div class="chip on" data-f="all" onclick="onFilter(this)">全員</div>'
+      + '<div class="chip" data-f="参加する" onclick="onFilter(this)">参加</div>'
+      + '<div class="chip" data-f="参加しない" onclick="onFilter(this)">不参加</div>'
+    + '</div>'
+    + '<div class="search"><input id="q" type="text" placeholder="名前・フリガナで検索" oninput="onSearch(this.value)"></div>'
+    + '<div id="list"></div>';
+  const sel = document.getElementById('evsel');
+  sel.innerHTML = evlist.map(function(e){ return '<option value="'+e+'">第'+e+'回</option>'; }).join('') || '<option value="">（データなし）</option>';
+  if(curEvent) sel.value = curEvent;
+  draw();
+}
+function evlistDefault(evlist){ return evlist.length ? evlist[0] : ''; }
+function onEvent(){ curEvent = document.getElementById('evsel').value; draw(); }
+function onFilter(el){
+  document.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('on'); });
+  el.classList.add('on'); curFilter = el.dataset.f; draw();
+}
+function onSearch(v){ curQuery = (v||'').trim(); draw(); }
+function draw(){
+  let rows = allRows.filter(function(r){ return String(r.eventNo)===String(curEvent); });
+  const nJoin = rows.filter(function(r){ return r.join==='参加する'; }).length;
+  const nNo   = rows.filter(function(r){ return r.join==='参加しない'; }).length;
+  setText('cJoin', nJoin+'名');
+  setText('cNo', nNo+'名');
+  setText('sub', '第'+curEvent+'回 ・ 合計 '+rows.length+'名');
+  if(curFilter!=='all') rows = rows.filter(function(r){ return r.join===curFilter; });
+  if(curQuery) rows = rows.filter(function(r){ return ((r.name||'')+' '+(r.kana||'')).indexOf(curQuery)>-1; });
+  rows.sort(function(a,b){ return String(a.kana||'').localeCompare(String(b.kana||''),'ja'); });
+  document.getElementById('list').innerHTML = rows.length
+    ? rows.map(card).join('')
+    : '<div class="note">該当する人がいません。</div>';
+}
+function card(r){
+  const joinB = r.join==='参加する' ? '<span class="b b-join">参加</span>' : '<span class="b b-no">不参加</span>';
+  const gB = r.gender==='男性' ? '<span class="b b-m">男性</span>' : (r.gender==='女性' ? '<span class="b b-f">女性</span>' : '');
+  const fB = r.firstTime==='はい' ? '<span class="b b-first">初参加</span>' : '';
+  const tel = r.phone ? '<a href="tel:'+escapeHtml(r.phone)+'">'+escapeHtml(r.phone)+'</a>' : '<span class="co">―</span>';
+  const co = r.company ? '<span class="co">'+escapeHtml(r.company)+'</span>' : '';
+  return '<div class="card">'
+    + '<div class="top"><div><div class="nm">'+escapeHtml(r.name||'')+'</div><div class="kn">'+escapeHtml(r.kana||'')+'</div></div>'+joinB+'</div>'
+    + '<div class="badges">'+gB+fB+'</div>'
+    + '<div class="meta">'+tel+co+'</div>'
+    + '</div>';
+}
+function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+main().catch(function(err){
+  app.innerHTML='<div class="note">読み込みに失敗しました。<br><small>'+escapeHtml(String(err))+'</small></div>';
+});
+</script>
+</body>
+</html>
