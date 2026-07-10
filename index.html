@@ -324,15 +324,29 @@ async function submitForm(){
 }
 
 function showDone(){
+  const inClient = (window.liff && liff.isInClient && liff.isInClient());
+  const closeBtn = inClient
+    ? '<button class="submit" style="margin-top:10px;background:#fff;color:var(--green-d);border:1px solid var(--line)" onclick="closeApp()">閉じる</button>'
+    : '';
   document.getElementById('app').innerHTML = `
     <div class="done">
       <div class="mark">✓</div>
       <h2>登録ありがとうございました</h2>
       <p>幹事に内容が届きました。</p>
+      <button class="submit" style="margin-top:22px" onclick="newEntry()">続けて別の人を登録する</button>
+      ${closeBtn}
+      <p class="note">ご家族・同僚などを代理で登録する場合は<br>「続けて別の人を登録する」を押してください。</p>
     </div>`;
-  if (window.liff && liff.isInClient && liff.isInClient()){
-    setTimeout(()=>{ try{ liff.closeWindow(); }catch(e){} }, 1500);
-  }
+}
+
+/* 代理登録用：フォームを真っさらにして最初から入力できるようにする（前回内容は引き継がない） */
+function newEntry(){
+  renderForm();
+  window.scrollTo(0, 0);
+}
+
+function closeApp(){
+  try{ liff.closeWindow(); }catch(e){}
 }
 
 function escapeHtml(s){
