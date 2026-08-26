@@ -84,11 +84,51 @@ let profile = { userId:'', displayName:'' };
 
 async function main(){
   await liff.init({ liffId: LIFF_ID });
-  if(!liff.isLoggedIn()){ liff.login(); return; }
+  if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
   profile = await liff.getProfile();
   document.querySelector('header p').textContent = '第' + EVENT_NO + '回 参加登録';
+
+  // 公式アカウントの友だち追加チェック（未追加だと通知が届かないので、登録の前に必須にする）
+  let isFriend = true;
+  try {
+    const fs = await liff.getFriendship();
+    isFriend = !!(fs && fs.friendFlag);
+  } catch (e) {
+    isFriend = true;   // 万一チェックできない時は登録を止めない（設定不備で全員ブロックを防ぐ）
+  }
+  if (!isFriend) { showAddFriend(); return; }
+
   renderForm();
   loadPrefill();
+}
+
+/* 公式アカウント未追加の人に、友だち追加を促す画面（追加するまで登録に進めない） */
+function showAddFriend(){
+  document.getElementById('app').innerHTML = `
+    <div class="done">
+      <div class="mark">📣</div>
+      <h2>先に友だち追加をお願いします</h2>
+      <p>受付の確認や当日のご連絡を、この公式アカウントからLINEでお送りします。<br>下のボタンから友だち追加してください。</p>
+      <button class="submit" style="margin-top:22px" onclick="addFriend()">公式アカウントを友だち追加する</button>
+      <button class="submit" style="margin-top:10px;background:#fff;color:var(--green-d);border:1px solid var(--line)" onclick="recheckFriend()">追加できたら、ここをタップ</button>
+      <p class="note">友だち追加をしないと登録に進めません。<br>（通知を確実にお届けするためです）</p>
+    </div>`;
+}
+
+function addFriend(){
+  const url = 'https://line.me/R/ti/p/@597kcofd';   // ★公式アカウントの友だち追加URL（basic ID）
+  try {
+    if (window.liff && liff.openWindow) { liff.openWindow({ url: url, external: false }); return; }
+  } catch (e) {}
+  location.href = url;
+}
+
+async function recheckFriend(){
+  try {
+    const fs = await liff.getFriendship();
+    if (fs && fs.friendFlag) { renderForm(); loadPrefill(); return; }
+  } catch (e) {}
+  alert('まだ友だち追加が確認できませんでした。先に「公式アカウントを友だち追加する」から追加してから、もう一度タップしてください。');
 }
 
 function renderForm(){
