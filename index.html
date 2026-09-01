@@ -53,11 +53,23 @@
   }
   button.submit:active{background:var(--green-d)}
   button.submit:disabled{opacity:.5}
-  .note{font-size:12px; color:var(--muted); margin-top:10px; text-align:center}
+  .note{font-size:13px; color:var(--muted); margin-top:10px; text-align:center}
+  .hint{font-size:14px; color:var(--muted); margin:7px 0 0; line-height:1.5}
+  .card{
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    padding:16px 14px; margin-top:26px; text-align:center;
+  }
+  .card h3{margin:0 0 6px; font-size:16px; color:var(--green-d)}
+  .card p{margin:0; font-size:14px; color:var(--muted); line-height:1.5}
+  button.line{
+    width:100%; margin-top:12px; padding:14px; font-size:16px; font-weight:700;
+    color:var(--green-d); background:#fff; border:1px solid var(--green); border-radius:12px; cursor:pointer;
+  }
   .done{text-align:center; padding:50px 10px}
   .done .mark{font-size:44px}
   .done h2{margin:10px 0 6px; font-size:19px}
   .done p{color:var(--muted); margin:0}
+  .done .hint{margin:8px 0 0}
   .loading{text-align:center; color:var(--muted); padding:60px 0}
 </style>
 </head>
@@ -82,37 +94,29 @@ const EVENT_NO = 61;   // ★ 多胡杯の回数。次回はここを 62 に変�
 
 let profile = { userId:'', displayName:'' };
 
+/* 公式アカウントを友だち追加済みかどうか。未確認のうちは true 扱いにして、
+   完了画面で不要な「友だち追加」の案内を出さないようにする */
+let isFriend = true;
+
 async function main(){
   await liff.init({ liffId: LIFF_ID });
   if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
   profile = await liff.getProfile();
   document.querySelector('header p').textContent = '第' + EVENT_NO + '回 参加登録';
 
-  // 公式アカウントの友だち追加チェック（未追加だと通知が届かないので、登録の前に必須にする）
-  let isFriend = true;
-  try {
-    const fs = await liff.getFriendship();
-    isFriend = !!(fs && fs.friendFlag);
-  } catch (e) {
-    isFriend = true;   // 万一チェックできない時は登録を止めない（設定不備で全員ブロックを防ぐ）
-  }
-  if (!isFriend) { showAddFriend(); return; }
+  // 友だち追加は必須にしない。完了画面での案内を出し分けるためだけに、裏で確認しておく
+  checkFriendship();
 
   renderForm();
   loadPrefill();
 }
 
-/* 公式アカウント未追加の人に、友だち追加を促す画面（追加するまで登録に進めない） */
-function showAddFriend(){
-  document.getElementById('app').innerHTML = `
-    <div class="done">
-      <div class="mark">📣</div>
-      <h2>先に友だち追加をお願いします</h2>
-      <p>受付の確認や当日のご連絡を、この公式アカウントからLINEでお送りします。<br>下のボタンから友だち追加してください。</p>
-      <button class="submit" style="margin-top:22px" onclick="addFriend()">公式アカウントを友だち追加する</button>
-      <button class="submit" style="margin-top:10px;background:#fff;color:var(--green-d);border:1px solid var(--line)" onclick="recheckFriend()">追加できたら、ここをタップ</button>
-      <p class="note">友だち追加をしないと登録に進めません。<br>（通知を確実にお届けするためです）</p>
-    </div>`;
+function checkFriendship(){
+  try {
+    liff.getFriendship()
+      .then(function(fs){ isFriend = !!(fs && fs.friendFlag); })
+      .catch(function(){});
+  } catch (e) {}
 }
 
 function addFriend(){
@@ -121,14 +125,6 @@ function addFriend(){
     if (window.liff && liff.openWindow) { liff.openWindow({ url: url, external: false }); return; }
   } catch (e) {}
   location.href = url;
-}
-
-async function recheckFriend(){
-  try {
-    const fs = await liff.getFriendship();
-    if (fs && fs.friendFlag) { renderForm(); loadPrefill(); return; }
-  } catch (e) {}
-  alert('まだ友だち追加が確認できませんでした。先に「公式アカウントを友だち追加する」から追加してから、もう一度タップしてください。');
 }
 
 function renderForm(){
@@ -165,6 +161,7 @@ function renderForm(){
     <div class="field">
       <label class="q">メールアドレス（任意）</label>
       <input id="email" type="email" inputmode="email" placeholder="example@mail.com">
+      <p class="hint">入れておくと、受付完了のお知らせがメールで届きます。<br>空欄のままでも登録できます。</p>
     </div>
 
     <div class="field">
@@ -368,6 +365,14 @@ function showDone(){
   const closeBtn = inClient
     ? '<button class="submit" style="margin-top:10px;background:#fff;color:var(--green-d);border:1px solid var(--line)" onclick="closeApp()">閉じる</button>'
     : '';
+  // 友だち追加は任意。まだ追加していない人にだけ、最後にひとこと添える
+  const friendCard = isFriend ? '' : `
+      <div class="card">
+        <h3>LINEでお知らせが届きます（任意）</h3>
+        <p>受付の確認や当日のご連絡を、公式アカウントからお送りします。</p>
+        <button class="line" onclick="addFriend()">公式アカウントを友だち追加する</button>
+        <p class="hint">追加しなくても、登録はもう終わっています。</p>
+      </div>`;
   document.getElementById('app').innerHTML = `
     <div class="done">
       <div class="mark">✓</div>
@@ -376,6 +381,7 @@ function showDone(){
       <button class="submit" style="margin-top:22px" onclick="newEntry()">続けて別の人を登録する</button>
       ${closeBtn}
       <p class="note">ご家族・同僚などを代理で登録する場合は<br>「続けて別の人を登録する」を押してください。</p>
+      ${friendCard}
     </div>`;
 }
 
