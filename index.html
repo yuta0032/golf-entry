@@ -161,7 +161,7 @@ function renderForm(){
     <div class="field">
       <label class="q">メールアドレス（任意）</label>
       <input id="email" type="email" inputmode="email" placeholder="example@mail.com">
-      <p class="hint">入れておくと、受付完了のお知らせがメールで届きます。<br>空欄のままでも登録できます。</p>
+      <p class="hint">メールアドレスを入れておくと、受付完了のお知らせが届きます。<br>空欄でも登録できます。</p>
     </div>
 
     <div class="field">
@@ -222,7 +222,7 @@ function renderForm(){
     </div>
 
     <button id="btn" class="submit" onclick="submitForm()">登録する</button>
-    <p class="note">送信後に内容を変更したい場合は、もう一度開いて再送信してください。</p>
+    <p class="note">送信後に内容を変更したい場合は、このフォームをもう一度開いて再送信してください。</p>
   `;
   fillBirthOptions();
 }
@@ -371,7 +371,7 @@ function showDone(){
         <h3>LINEでお知らせが届きます（任意）</h3>
         <p>受付の確認や当日のご連絡を、公式アカウントからお送りします。</p>
         <button class="line" onclick="addFriend()">公式アカウントを友だち追加する</button>
-        <p class="hint">追加しなくても、登録はもう終わっています。</p>
+        <p class="hint">友だち追加をしなくても、登録はもう終わっています。</p>
       </div>`;
   document.getElementById('app').innerHTML = `
     <div class="done">
