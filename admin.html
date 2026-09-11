@@ -41,6 +41,7 @@
   .b-m{background:#e6f1fb; color:#0c447c}
   .b-f{background:#fbeaf0; color:#72243e}
   .b-first{background:#faeeda; color:#633806}
+  .b-age{background:#eef0ee; color:#3c463d}
   .meta{display:flex; justify-content:space-between; align-items:center; margin-top:10px}
   .meta a{font-size:14px; color:var(--green-d); text-decoration:none; font-weight:600}
   .meta .co{font-size:12px; color:var(--muted)}
@@ -113,6 +114,56 @@ let curEvent = '';
 let curFilter = 'all';
 let curQuery = '';
 
+/* ============================================================
+   年齢：基準日は大会当日。変えるときはこの AGE_BASE だけ直す
+   ============================================================ */
+const AGE_BASE = { y:2026, m:10, d:31 };
+function ageBaseLabel(){ return AGE_BASE.y + '年' + AGE_BASE.m + '月' + AGE_BASE.d + '日'; }
+
+/* 年・月・日の妥当性を見て {y,m,d} を返す。実在しない日付は null */
+function ymd_(y, mo, d){
+  if(!(y >= 1900 && y <= AGE_BASE.y)) return null;
+  if(!(mo >= 1 && mo <= 12)) return null;
+  if(!(d >= 1 && d <= 31)) return null;
+  const t = new Date(y, mo - 1, d);
+  if(t.getFullYear() !== y || t.getMonth() !== mo - 1 || t.getDate() !== d) return null;  // 2/30 などを弾く
+  return { y:y, m:mo, d:d };
+}
+
+/* 生年月日を読む。読めない形は null を返して、無理に数字を出さない。
+   受け付ける形： Date / YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD /
+                  ISO日時（GAS が Date を返した場合。シートは日本時間として読む） */
+function parseBirth(v){
+  if(v === undefined || v === null) return null;
+  if(Object.prototype.toString.call(v) === '[object Date]'){
+    return isNaN(v.getTime()) ? null : ymd_(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  }
+  const s = String(v).trim();
+  if(!s) return null;
+  let m;
+  if((m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/))) return ymd_(+m[1], +m[2], +m[3]);
+  if(/^\d{4}-\d{2}-\d{2}[T ]/.test(s)){
+    /* ISO日時。UTC の瞬間を日本時間(+09:00)の日付に直してから使う。
+       そうしないと 1985-11-15 が 11-14 にずれる */
+    const t = new Date(s);
+    if(isNaN(t.getTime())) return null;
+    const j = new Date(t.getTime() + 9 * 3600 * 1000);
+    return ymd_(j.getUTCFullYear(), j.getUTCMonth() + 1, j.getUTCDate());
+  }
+  if((m = s.match(/^(\d{8})$/))) return ymd_(+s.slice(0,4), +s.slice(4,6), +s.slice(6,8));
+  return null;
+}
+
+/* 基準日時点の満年齢。誕生日が基準日と同日ならその年齢に達している扱い */
+function calcAge(v){
+  const b = parseBirth(v);
+  if(!b) return null;
+  let a = AGE_BASE.y - b.y;
+  if(AGE_BASE.m < b.m || (AGE_BASE.m === b.m && AGE_BASE.d < b.d)) a--;
+  return (a >= 0 && a <= 130) ? a : null;
+}
+function ageText(r){ const a = calcAge(r && r.birth); return a === null ? '' : String(a); }
+
 /* ===== 印刷用一覧：出せる項目 =====
    d:true は既定でオン。GAS が返していない項目は空欄になる（画面上は「データなし」と出る） */
 const PCOLS = [
@@ -121,6 +172,7 @@ const PCOLS = [
   { k:'phone',       t:'携帯番号',   d:true,  nw:true  },
   { k:'email',       t:'メール',     d:false, nw:false },
   { k:'birth',       t:'生年月日',   d:false, nw:true  },
+  { k:'__age',       t:'年齢',       d:true,  nw:true  },
   { k:'gender',      t:'性別',       d:false, nw:true  },
   { k:'firstTime',   t:'初参加',     d:true,  nw:true  },
   { k:'referrer',    t:'紹介者',     d:true,  nw:true  },
@@ -254,6 +306,7 @@ function saveCols(){
 
 /* その項目を1件でも持っている人がいるか（GASが返していない項目を見分けるため） */
 function colHasData(k){
+  if(k === '__age') return allRows.some(function(r){ return calcAge(r.birth) !== null; });
   return allRows.some(function(r){ return r[k] !== undefined && r[k] !== null && String(r[k]) !== ''; });
 }
 
@@ -297,9 +350,9 @@ function selectedCols(){ return PCOLS.filter(function(c){ return pOn[c.k]; }); }
 
 /* 列数に応じて 縦/横 と文字の大きさを決める（最小75%、それ以下は折り返しで対応） */
 function pageSetup(n){
-  const portrait = n <= 8;
+  const portrait = n <= 9;          // 既定の9項目（年齢を含む）までは A4縦に収める
   let scale = 1;
-  if(portrait){ scale = n <= 6 ? 1 : (n === 7 ? 0.92 : 0.85); }
+  if(portrait){ scale = n <= 6 ? 1 : (n === 7 ? 0.92 : (n === 8 ? 0.85 : 0.8)); }
   else        { scale = n <= 10 ? 1 : (n === 11 ? 0.92 : (n === 12 ? 0.85 : (n === 13 ? 0.8 : 0.75))); }
   return { orient: portrait ? 'portrait' : 'landscape', scale: scale };
 }
@@ -320,7 +373,8 @@ function drawPrint(){
               + (pList === 'join' ? '参加者一覧' : '不参加者一覧')
               + '（' + rows.length + '名）';
   const d = new Date();
-  const printed = '印刷日：' + d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日';
+  let printed = '印刷日：' + d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日';
+  if(pOn['__age']) printed += '　／　年齢は大会当日（' + ageBaseLabel() + '）時点';
 
   let body;
   if(!cols.length){
@@ -347,6 +401,7 @@ function drawPrint(){
 }
 
 function cellText(r, k){
+  if(k === '__age') return ageText(r);          // 年齢は生年月日から計算する項目
   const v = r[k];
   if(v === undefined || v === null) return '';
   return String(v);
@@ -378,11 +433,16 @@ function card(r){
   const joinB = r.join==='参加する' ? '<span class="b b-join">参加</span>' : '<span class="b b-no">不参加</span>';
   const gB = r.gender==='男性' ? '<span class="b b-m">男性</span>' : (r.gender==='女性' ? '<span class="b b-f">女性</span>' : '');
   const fB = r.firstTime==='はい' ? '<span class="b b-first">初参加</span>' : '';
+  const age = calcAge(r.birth);
+  const aB  = r.birth
+    ? '<span class="b b-age">' + escapeHtml(String(r.birth))
+      + (age === null ? '' : '（' + age + '歳）') + '</span>'
+    : '';
   const tel = r.phone ? '<a href="tel:'+escapeHtml(r.phone)+'">'+escapeHtml(r.phone)+'</a>' : '<span class="co">―</span>';
   const co = r.company ? '<span class="co">'+escapeHtml(r.company)+'</span>' : '';
   return '<div class="card">'
     + '<div class="top"><div><div class="nm">'+escapeHtml(r.name||'')+'</div><div class="kn">'+escapeHtml(r.kana||'')+'</div></div>'+joinB+'</div>'
-    + '<div class="badges">'+gB+fB+'</div>'
+    + '<div class="badges">'+gB+fB+aB+'</div>'
     + '<div class="meta">'+tel+co+'</div>'
     + '</div>';
 }
