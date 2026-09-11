@@ -51,6 +51,42 @@
   .setup button{width:100%; padding:12px; font-size:15px; font-weight:700; color:#fff; background:var(--green); border:none; border-radius:10px; cursor:pointer; margin-top:6px}
   .setup ol{margin:14px 0 0; padding-left:20px; font-size:13px; color:var(--muted)}
   .setup code{background:var(--bg); padding:1px 5px; border-radius:4px}
+
+  /* ===== 印刷用一覧 ===== */
+  .pbtn{padding:10px 14px; font-size:14px; font-weight:600; color:var(--green-d); background:#fff;
+        border:1px solid var(--line); border-radius:10px; cursor:pointer}
+  .pbtn.go{background:var(--green); color:#fff; border-color:var(--green)}
+  .pgrp{margin-bottom:12px}
+  .plabel{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
+  .pgrp label{display:inline-block; margin-right:14px; font-size:14px; white-space:nowrap}
+  .pcols{display:flex; flex-wrap:wrap; gap:6px 0}
+  .pcols label{flex:0 0 50%; margin:0; padding:3px 0}
+  .pcols .empty{color:var(--muted); font-size:11px}
+  .prow{display:flex; gap:8px; flex-wrap:wrap}
+  .ptitle{font-size:15px; font-weight:700; margin:0 0 2px}
+  .pmeta{font-size:12px; color:var(--muted); margin:0 0 8px}
+  #printArea{background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; overflow-x:auto}
+  table.plist{border-collapse:collapse; width:100%; font-size:13px}
+  table.plist th,table.plist td{border:1px solid #b9c0b9; padding:4px 6px; text-align:left;
+        vertical-align:top; word-break:break-word; white-space:normal}
+  table.plist th{background:#eef2ec; font-weight:700; white-space:nowrap}
+  table.plist .num{text-align:right; white-space:nowrap; width:1%}
+  /* 電話番号・日付・氏名など、途中で割れると読み違える値は折り返さない。
+     列幅は指定していないので、残りの幅は備考などの長い列に自動で回る */
+  table.plist td.nw{white-space:nowrap}
+
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none; margin:0; padding:0}
+    /* #printArea は .wrap > #app の中にあるので、階層ごとに兄弟だけを隠す
+       （.wrap > * をまとめて隠すと祖先ごと消えて白紙になる） */
+    .wrap > *:not(#app){display:none !important}
+    #app > *:not(#printArea){display:none !important}
+    #printArea{display:block !important; border:none; border-radius:0; padding:0; margin:0; overflow:visible}
+    table.plist{font-size:calc(13px * var(--pscale,1))}
+    thead{display:table-header-group}
+    tr{break-inside:avoid; page-break-inside:avoid}
+  }
 </style>
 </head>
 <body>
@@ -76,6 +112,28 @@ let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
 let curQuery = '';
+
+/* ===== 印刷用一覧：出せる項目 =====
+   d:true は既定でオン。GAS が返していない項目は空欄になる（画面上は「データなし」と出る） */
+const PCOLS = [
+  { k:'name',        t:'姓名',       d:true,  nw:true  },
+  { k:'kana',        t:'フリガナ',   d:true,  nw:true  },
+  { k:'phone',       t:'携帯番号',   d:true,  nw:true  },
+  { k:'email',       t:'メール',     d:false, nw:false },
+  { k:'birth',       t:'生年月日',   d:false, nw:true  },
+  { k:'gender',      t:'性別',       d:false, nw:true  },
+  { k:'firstTime',   t:'初参加',     d:true,  nw:true  },
+  { k:'referrer',    t:'紹介者',     d:true,  nw:true  },
+  { k:'company',     t:'会社参加',   d:false, nw:true  },
+  { k:'companyName', t:'会社名',     d:true,  nw:false },
+  { k:'receipt',     t:'領収書',     d:true,  nw:true  },
+  { k:'note',        t:'備考',       d:true,  nw:false },
+  { k:'displayName', t:'LINE表示名', d:false, nw:false },
+  { k:'timestamp',   t:'登録日時',   d:false, nw:true  }
+];
+const PCOLS_KEY = 'tagocup.printCols';
+let pList = 'join';        // 'join'=参加者 / 'no'=不参加者
+let pOn = {};              // 選ばれている項目
 
 async function main(){
   await liff.init({ liffId: LIFF_ID });
@@ -143,6 +201,24 @@ function renderDash(res){
       + '<div class="chip" data-f="参加しない" onclick="onFilter(this)">不参加</div>'
     + '</div>'
     + '<div class="search"><input id="q" type="text" placeholder="名前・フリガナで検索" oninput="onSearch(this.value)"></div>'
+    + '<div class="row"><button class="pbtn" id="pToggle" onclick="togglePrint()">印刷用の一覧をつくる</button></div>'
+    + '<div id="printPanel" hidden>'
+      + '<div class="card">'
+        + '<div class="pgrp"><span class="plabel">どちらを印刷しますか</span>'
+          + '<label><input type="radio" name="plist" value="join" checked onchange="onPList(this)"> 参加者一覧</label>'
+          + '<label><input type="radio" name="plist" value="no" onchange="onPList(this)"> 不参加者一覧</label>'
+        + '</div>'
+        + '<div class="pgrp"><span class="plabel">入れる項目（チェックしたものが印刷されます）</span>'
+          + '<div class="pcols" id="pcols"></div>'
+        + '</div>'
+        + '<div class="prow">'
+          + '<button class="pbtn go" onclick="doPrint()">印刷する</button>'
+          + '<button class="pbtn" onclick="setAllCols(true)">全部入れる</button>'
+          + '<button class="pbtn" onclick="setAllCols(false)">全部外す</button>'
+        + '</div>'
+      + '</div>'
+    + '</div>'
+    + '<div id="printArea" hidden></div>'
     + '<div id="list"></div>';
 
   // 回セレクトを構築
@@ -154,12 +230,132 @@ function renderDash(res){
 
 function evlistDefault(evlist){ return evlist.length ? evlist[0] : ''; }
 
-function onEvent(){ curEvent = document.getElementById('evsel').value; draw(); }
+function onEvent(){ curEvent = document.getElementById('evsel').value; draw(); drawPrint(); }
 function onFilter(el){
   document.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('on'); });
   el.classList.add('on'); curFilter = el.dataset.f; draw();
 }
 function onSearch(v){ curQuery = (v||'').trim(); draw(); }
+
+/* ============================================================
+   印刷用一覧
+   ============================================================ */
+function loadCols(){
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PCOLS_KEY) || 'null'); } catch(e){}
+  pOn = {};
+  PCOLS.forEach(function(c){
+    pOn[c.k] = (saved && typeof saved[c.k] === 'boolean') ? saved[c.k] : c.d;
+  });
+}
+function saveCols(){
+  try { localStorage.setItem(PCOLS_KEY, JSON.stringify(pOn)); } catch(e){}
+}
+
+/* その項目を1件でも持っている人がいるか（GASが返していない項目を見分けるため） */
+function colHasData(k){
+  return allRows.some(function(r){ return r[k] !== undefined && r[k] !== null && String(r[k]) !== ''; });
+}
+
+function renderCols(){
+  const box = document.getElementById('pcols');
+  if(!box) return;
+  box.innerHTML = PCOLS.map(function(c){
+    const none = colHasData(c.k) ? '' : ' <span class="empty">（データなし）</span>';
+    return '<label><input type="checkbox" data-k="' + c.k + '"' + (pOn[c.k] ? ' checked' : '')
+         + ' onchange="onCol(this)"> ' + escapeHtml(c.t) + none + '</label>';
+  }).join('');
+}
+function onCol(el){ pOn[el.dataset.k] = el.checked; saveCols(); drawPrint(); }
+function setAllCols(v){
+  PCOLS.forEach(function(c){ pOn[c.k] = v; });
+  saveCols(); renderCols(); drawPrint();
+}
+function onPList(el){ pList = el.value; drawPrint(); }
+
+function togglePrint(){
+  const panel = document.getElementById('printPanel');
+  const area  = document.getElementById('printArea');
+  const list  = document.getElementById('list');
+  const btn   = document.getElementById('pToggle');
+  const open  = panel.hidden;
+  panel.hidden = !open; area.hidden = !open; list.hidden = open;
+  btn.textContent = open ? '通常の表示に戻る' : '印刷用の一覧をつくる';
+  if(open){ loadCols(); renderCols(); drawPrint(); }
+}
+
+/* 印刷対象の行。回999（テスト）は必ず除く */
+function printRows(){
+  return allRows.filter(function(r){
+    if(String(r.eventNo) !== String(curEvent)) return false;
+    if(String(r.eventNo) === '999') return false;
+    return pList === 'join' ? (r.join === '参加する') : (r.join !== '参加する');
+  }).sort(function(a,b){ return String(a.kana||'').localeCompare(String(b.kana||''),'ja'); });
+}
+
+function selectedCols(){ return PCOLS.filter(function(c){ return pOn[c.k]; }); }
+
+/* 列数に応じて 縦/横 と文字の大きさを決める（最小75%、それ以下は折り返しで対応） */
+function pageSetup(n){
+  const portrait = n <= 8;
+  let scale = 1;
+  if(portrait){ scale = n <= 6 ? 1 : (n === 7 ? 0.92 : 0.85); }
+  else        { scale = n <= 10 ? 1 : (n === 11 ? 0.92 : (n === 12 ? 0.85 : (n === 13 ? 0.8 : 0.75))); }
+  return { orient: portrait ? 'portrait' : 'landscape', scale: scale };
+}
+
+function drawPrint(){
+  const area = document.getElementById('printArea');
+  if(!area) return;
+  const cols = selectedCols();
+  const rows = printRows();
+  const setup = pageSetup(cols.length);
+
+  let st = document.getElementById('pageStyle');
+  if(!st){ st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
+  st.textContent = '@page{size:A4 ' + setup.orient + '; margin:12mm}';
+  area.style.setProperty('--pscale', setup.scale);
+
+  const title = '第' + curEvent + '回多胡杯ゴルフコンペ　'
+              + (pList === 'join' ? '参加者一覧' : '不参加者一覧')
+              + '（' + rows.length + '名）';
+  const d = new Date();
+  const printed = '印刷日：' + d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日';
+
+  let body;
+  if(!cols.length){
+    body = '<p class="pmeta">項目が1つも選ばれていません。</p>';
+  } else if(!rows.length){
+    body = '<p class="pmeta">該当する方はいません。</p>';
+  } else {
+    const head = '<tr><th class="num">No.</th>'
+               + cols.map(function(c){ return '<th>' + escapeHtml(c.t) + '</th>'; }).join('')
+               + '</tr>';
+    const trs = rows.map(function(r, i){
+      return '<tr><td class="num">' + (i+1) + '</td>'
+           + cols.map(function(c){
+               return '<td' + (c.nw ? ' class="nw"' : '') + '>' + escapeHtml(cellText(r, c.k)) + '</td>';
+             }).join('')
+           + '</tr>';
+    }).join('');
+    body = '<table class="plist"><thead>' + head + '</thead><tbody>' + trs + '</tbody></table>';
+  }
+
+  area.innerHTML = '<p class="ptitle">' + escapeHtml(title) + '</p>'
+                 + '<p class="pmeta">' + escapeHtml(printed) + '</p>'
+                 + body;
+}
+
+function cellText(r, k){
+  const v = r[k];
+  if(v === undefined || v === null) return '';
+  return String(v);
+}
+
+function doPrint(){
+  drawPrint();
+  window.print();
+}
 
 function draw(){
   let rows = allRows.filter(function(r){ return String(r.eventNo)===String(curEvent); });
