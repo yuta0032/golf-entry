@@ -88,7 +88,6 @@
    ============================================================ */
 const LIFF_ID = '2010392345-WMpqQivB';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzVfEJMWakJbssH2pRQQ8NesAy0UX9lGO4IB3Jh59VWoDsr62HHdWIkc4A8jbt1rZZe3Q/exec';
-const SECRET  = 'tagocup-x7k2q9m4';   // ★ gas-backend.gs と同じ文字列にする
 const EVENT_NO = 61;   // ★ 多胡杯の回数。次回はここを 62 に変えるだけ
 /* ============================================================ */
 
@@ -247,15 +246,22 @@ function setRadio(name,v){ const el=document.querySelector('input[name="'+name+'
 
 /* 前回回答の引き継ぎ（JSONPでGASから取得して各項目に流し込む） */
 function loadPrefill(){
-  if(!profile.userId) return;
+  const idToken = getIdToken();
+  if(!idToken) return;                 // トークンが取れないときは前回内容を引き継がない
   window.__prefill = function(d){ try{ applyPrefill(d); }catch(e){} };
   const s = document.createElement('script');
+  /* 誰の分を返すかは GAS が ID トークンを検証して決める。
+     userId をこちらから渡さないので、他人の分は引けない */
   s.src = GAS_URL + '?action=prefill'
-    + '&userId='  + encodeURIComponent(profile.userId)
-    + '&secret='  + encodeURIComponent(SECRET)
+    + '&idToken=' + encodeURIComponent(idToken)
     + '&callback=__prefill';
   s.onerror = function(){};
   document.body.appendChild(s);
+}
+
+/* LINE が発行した ID トークン。GAS 側で LINE に検証させる */
+function getIdToken(){
+  try { return liff.getIDToken() || ''; } catch(e){ return ''; }
 }
 
 function applyPrefill(d){
@@ -324,10 +330,10 @@ async function submitForm(){
     : '';
 
   const data = {
-    secret:      SECRET,
+    idToken:     getIdToken(),
     eventNo:     EVENT_NO,
-    userId:      profile.userId,
-    displayName: profile.displayName,
+    userId:      profile.userId,      // 参考値。GAS 側で検証済みの値に必ず上書きされる
+    displayName: profile.displayName, // 同上
     phone:       val('phone'),
     email:       val('email'),
     name:        fullName,
