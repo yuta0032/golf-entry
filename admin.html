@@ -441,9 +441,25 @@ function pageSetup(n){
   return { orient: portrait ? 'portrait' : 'landscape', scale: scale };
 }
 
+/* 一番古い回には「前の回」が無いので、その選択肢は選べないようにする。
+   選んだ状態で古い回に切り替えた場合は、参加者一覧に戻す */
+function syncPendingOption(){
+  const el = document.querySelector('input[name="plist"][value="pending"]');
+  if(!el) return;
+  const none = prevEvent() === null;
+  el.disabled = none;
+  if(el.parentNode) el.parentNode.style.opacity = none ? '.45' : '';
+  if(none && pList === 'pending'){
+    pList = 'join';
+    const j = document.querySelector('input[name="plist"][value="join"]');
+    if(j) j.checked = true;
+  }
+}
+
 function drawPrint(){
   const area = document.getElementById('printArea');
   if(!area) return;
+  syncPendingOption();
   const cols = selectedCols();
   const rows = printRows();
   const setup = pageSetup(cols.length);
