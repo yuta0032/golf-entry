@@ -164,6 +164,13 @@ function doPost(e) {
     /* ── 1. 誰からの送信かを確かめる ───────────────── */
     const who = resolveSender_(d);
     if (!who || !who.userId) {
+      /* 弾いたときだけ1行残す。あとで「実行数」から原因を追えるようにするため。
+         氏名・電話・トークンなど個人にひもづくものは出さない。
+         CHANNEL_ID の入れ忘れ・入れ間違いがいちばんよくある原因なので、
+         設定されているかどうかだけ併せて出す */
+      Logger.log('forbidden: idToken=' + !!d.idToken
+               + ' channelIdSet=' + !!CHANNEL_ID
+               + ' eventNo=' + (d.eventNo || ''));
       return json_({ result: 'forbidden' });
     }
     d.userId = who.userId;                 // 自己申告を検証済みの値で必ず上書きする
