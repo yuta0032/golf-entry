@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>多胡杯ゴルフコンペ 管理画面</title>
-<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   :root{
     --green:#2f6b3f; --green-d:#234f2f; --line:#dfe3dd;
@@ -95,6 +94,11 @@
   <div id="app"><div class="note">読み込み中…</div></div>
 </div>
 
+<!-- LIFF の SDK は 130KB ある。<head> に置くと読み終わるまで本文が描かれず、
+     回線が細いと真っ白な時間ができる。本文の後ろに移して、先に
+     「読み込み中…」が出るようにしてある -->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
 <script>
 /* ============================================================
    設定：最初は ADMIN_USERID を空のままデプロイ → 自分のLINEで開くと
@@ -107,6 +111,25 @@ const ADMIN_USERID = 'Uf4fdbb2775ec9f55aea2e070c8252a73';   // ★ 設定済み
 /* ============================================================ */
 
 const app = document.getElementById('app');
+
+/* 読み込みが遅いときの切り分け用。admin.html?debug=1 で開くと
+   どの段で何秒かかったかを画面の下に出す。普段は何もしない */
+const DEBUG = /[?&]debug=1/.test(location.search);
+const T0 = Date.now();
+const LAPS = [];
+function lap(name){
+  LAPS.push(name + ' ' + ((Date.now() - T0) / 1000).toFixed(2) + '秒');
+  if(!DEBUG) return;
+  let el = document.getElementById('laps');
+  if(!el){
+    el = document.createElement('pre');
+    el.id = 'laps';
+    el.style.cssText = 'margin:14px 0;padding:10px;background:#fff;border:1px solid var(--line);'
+                     + 'border-radius:10px;font-size:12px;white-space:pre-wrap';
+    document.querySelector('.wrap').appendChild(el);
+  }
+  el.textContent = LAPS.join('\n');
+}
 let profile = { userId:'', displayName:'' };
 let token = '';
 let allRows = [];
@@ -188,9 +211,23 @@ let pList = 'join';        // 'join'=参加者 / 'no'=不参加者
 let pOn = {};              // 選ばれている項目
 
 async function main(){
+  lap('開始');
   await liff.init({ liffId: LIFF_ID });
+  lap('liff.init 完了');
   if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
-  profile = await liff.getProfile();
+
+  /* 幹事かどうかは ID トークンを復号すれば分かる。
+     liff.getProfile() は LINE と1往復するぶん表示が遅れるので、
+     取れなかったときだけ従来どおり getProfile() に落とす */
+  let me = null;
+  try { me = liff.getDecodedIDToken(); } catch(e){}
+  if(me && me.sub){
+    profile = { userId: me.sub, displayName: me.name || '' };
+    lap('本人確認（IDトークン・往復なし）');
+  }else{
+    profile = await liff.getProfile();
+    lap('本人確認（getProfile・LINEと1往復）');
+  }
   token = liff.getAccessToken();
 
   if(!ADMIN_USERID){ showSetup(); return; }
@@ -224,7 +261,12 @@ function showDenied(){
 }
 
 function loadList(){
-  window.__list = function(res){ try{ renderDash(res); }catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; } };
+  lap('一覧の取得を開始');
+  window.__list = function(res){
+    lap('一覧を受信');
+    try{ renderDash(res); }catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; }
+    lap('描画完了');
+  };
   const s = document.createElement('script');
   s.src = GAS_URL + '?action=list&token=' + encodeURIComponent(token) + '&callback=__list';
   s.onerror = function(){ app.innerHTML='<div class="note">データの取得に失敗しました。</div>'; };
@@ -235,7 +277,12 @@ function renderDash(res){
   if(!res || res.error){ showDenied(); return; }
   allRows = res.rows || [];
   const events = {};
-  allRows.forEach(function(r){ if(r.eventNo!=='' && r.eventNo!=null) events[r.eventNo]=true; });
+  /* 回999 は動作確認用なので、選べる回には出さない（印刷側でも除いている） */
+  allRows.forEach(function(r){
+    if(r.eventNo==='' || r.eventNo==null) return;
+    if(String(r.eventNo)==='999') return;
+    events[r.eventNo]=true;
+  });
   const evlist = Object.keys(events).sort(function(a,b){ return Number(b)-Number(a); });
   curEvent = evlistDefault(evlist);
 
@@ -259,6 +306,7 @@ function renderDash(res){
         + '<div class="pgrp"><span class="plabel">どちらを印刷しますか</span>'
           + '<label><input type="radio" name="plist" value="join" checked onchange="onPList(this)"> 参加者一覧</label>'
           + '<label><input type="radio" name="plist" value="no" onchange="onPList(this)"> 不参加者一覧</label>'
+          + '<label><input type="radio" name="plist" value="pending" onchange="onPList(this)"> 前回参加・今回未申込</label>'
         + '</div>'
         + '<div class="pgrp"><span class="plabel">入れる項目（チェックしたものが印刷されます）</span>'
           + '<div class="pcols" id="pcols"></div>'
@@ -337,13 +385,49 @@ function togglePrint(){
   if(open){ loadCols(); renderCols(); drawPrint(); }
 }
 
+/* 今の回のひとつ前の回。台帳にある回のうち、今の回より小さい最大のもの */
+function prevEvent(){
+  const cur = Number(curEvent);
+  let prev = null;
+  allRows.forEach(function(r){
+    const n = Number(r.eventNo);
+    if(!isFinite(n) || n === 999) return;
+    if(n < cur && (prev === null || n > prev)) prev = n;
+  });
+  return prev;
+}
+
 /* 印刷対象の行。回999（テスト）は必ず除く */
 function printRows(){
+  const sortByKana = function(a, b){
+    return String(a.kana||'').localeCompare(String(b.kana||''), 'ja');
+  };
+
+  if(pList === 'pending'){
+    /* 前の回に参加した人のうち、今の回にまだ申込が無い人。
+       姓名で突き合わせる（台帳の重複判定も姓名なので精度は同じ） */
+    const prev = prevEvent();
+    if(prev === null) return [];
+    const done = {};
+    allRows.forEach(function(r){
+      if(String(r.eventNo) === String(curEvent)) done[String(r.name||'').trim()] = true;
+    });
+    const seen = {};
+    return allRows.filter(function(r){
+      if(String(r.eventNo) !== String(prev)) return false;
+      if(r.join !== '参加する') return false;
+      const nm = String(r.name||'').trim();
+      if(!nm || done[nm] || seen[nm]) return false;
+      seen[nm] = true;
+      return true;
+    }).sort(sortByKana);
+  }
+
   return allRows.filter(function(r){
     if(String(r.eventNo) !== String(curEvent)) return false;
     if(String(r.eventNo) === '999') return false;
     return pList === 'join' ? (r.join === '参加する') : (r.join !== '参加する');
-  }).sort(function(a,b){ return String(a.kana||'').localeCompare(String(b.kana||''),'ja'); });
+  }).sort(sortByKana);
 }
 
 function selectedCols(){ return PCOLS.filter(function(c){ return pOn[c.k]; }); }
@@ -369,18 +453,24 @@ function drawPrint(){
   st.textContent = '@page{size:A4 ' + setup.orient + '; margin:12mm}';
   area.style.setProperty('--pscale', setup.scale);
 
-  const title = '第' + curEvent + '回多胡杯ゴルフコンペ　'
-              + (pList === 'join' ? '参加者一覧' : '不参加者一覧')
+  const prev = pList === 'pending' ? prevEvent() : null;
+  const kind = pList === 'join' ? '参加者一覧'
+             : (pList === 'no' ? '不参加者一覧'
+             : '第' + (prev === null ? '―' : prev) + '回に参加・今回未申込の方');
+  const title = '第' + curEvent + '回多胡杯ゴルフコンペ　' + kind
               + '（' + rows.length + '名）';
   const d = new Date();
   let printed = '印刷日：' + d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日';
   if(pOn['__age']) printed += '　／　年齢は大会当日（' + ageBaseLabel() + '）時点';
+  if(pList === 'pending') printed += '　／　姓名で突き合わせています。同姓同名の方は漏れることがあります';
 
   let body;
   if(!cols.length){
     body = '<p class="pmeta">項目が1つも選ばれていません。</p>';
   } else if(!rows.length){
-    body = '<p class="pmeta">該当する方はいません。</p>';
+    body = '<p class="pmeta">' + (pList === 'pending' && prev === null
+      ? '前の回のデータが台帳にありません。'
+      : '該当する方はいません。') + '</p>';
   } else {
     const head = '<tr><th class="num">No.</th>'
                + cols.map(function(c){ return '<th>' + escapeHtml(c.t) + '</th>'; }).join('')
