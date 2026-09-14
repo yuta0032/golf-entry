@@ -1,8 +1,16 @@
 /**
- * 多胡杯ゴルフコンペ 受付バックエンド（案A：LIFF の ID トークンを検証する版）
+ * 多胡杯ゴルフコンペ 受付バックエンド（v54：合言葉を完全に無効化した版）
  * Apps Script のファイル名「名簿用」にまるごと貼り付けてください。
  *
- * v52 からの変更は次の4点だけです。
+ * ★v53 との違いは2点だけです。
+ *   ・ACCEPT_LEGACY_SECRET を false、LEGACY_SECRET を '' にした。
+ *     これで旧方式の合言葉は一切通らなくなります。
+ *     **新しい index.html が公開済みであることを確認してから貼ってください。**
+ *     （公開済み：main 505c48d で index.html は ID トークンを送る形になっています）
+ *   ・verifyAdmin の結果を10分だけ覚えるようにした（管理画面の表示が 0.4〜0.6 秒速くなる）。
+ *     CacheService は新しい権限が要らないので、再承認は発生しません。
+ *
+ * v52 からの変更は次の4点です。
  *   1. 認証：合言葉(SECRET)をやめ、LINE が発行した ID トークンを LINE 自身に検証させる。
  *      prefill は userId を受け取らなくなり、検証結果の sub でしか引けない。
  *      → 「合言葉 + 他人の userId」で個人情報を引き出せた穴が塞がる。
@@ -34,10 +42,10 @@ const CHANNEL_ID = '';
 const LINE_TOKEN  = '';   // ← v52 の LINE_TOKEN
 const ADMIN_EMAIL = '';   // ← v52 の ADMIN_EMAIL
 
-/** ③ 移行期間だけ旧方式も受け付ける。
- *     新しい index.html を公開したら false / '' に戻して、もう一度版を上げる */
-const ACCEPT_LEGACY_SECRET = true;
-const LEGACY_SECRET = '';   // ← v52 の SECRET
+/** ③ 旧方式（合言葉）は無効。v54 ではここを触る必要はありません。
+ *     もし ID トークン側で問題が出て切り戻すなら、v53 のデプロイに戻してください */
+const ACCEPT_LEGACY_SECRET = false;
+const LEGACY_SECRET = '';
 
 /* 以下は v52 と同じ値。変更不要 */
 const SHEET_ID     = '1NIhnBlwMC4LVP0pPpx1ZHYROtDdbpNBevU1xlvOM5uc';
@@ -78,16 +86,29 @@ function verifyIdToken_(idToken) {
   } catch (e) { return null; }
 }
 
-/** 管理画面の一覧用。v52 と同じ */
+/** 管理画面の一覧用。
+ *  判定のたびに LINE と往復していて 0.4〜0.6 秒かかっていたので、結果を10分だけ覚える。
+ *  トークンは生のまま鍵にせず SHA-256 にしてから使う。
+ *  CacheService は追加の権限が要らないので、貼り替えても再承認は発生しない。
+ *  （副作用：アクセストークンを失効させても最大10分は通る。
+ *    LINE のアクセストークン自体が短命なので実害は小さいと判断） */
 function verifyAdmin(token) {
   if (!token || !ADMIN_USERID) return false;
   try {
+    const cache = CacheService.getScriptCache();
+    const key = 'adm_' + Utilities.base64EncodeWebSafe(
+      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
+    const hit = cache.get(key);
+    if (hit !== null) return hit === '1';
+
     const res = UrlFetchApp.fetch('https://api.line.me/v2/profile', {
       headers: { 'Authorization': 'Bearer ' + token },
       muteHttpExceptions: true
     });
-    if (res.getResponseCode() !== 200) return false;
-    return JSON.parse(res.getContentText()).userId === ADMIN_USERID;
+    const ok = res.getResponseCode() === 200 &&
+               JSON.parse(res.getContentText()).userId === ADMIN_USERID;
+    cache.put(key, ok ? '1' : '0', 600);   // 10分
+    return ok;
   } catch (e) { return false; }
 }
 
