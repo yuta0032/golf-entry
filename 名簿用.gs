@@ -1,45 +1,45 @@
 /**
  * 多胡杯ゴルフコンペ 受付バックエンド（案A：LIFF の ID トークンを検証する版）
+ * Apps Script のファイル名「名簿用」にまるごと貼り付けてください。
  *
- * 現行の Apps Script（プロジェクト内のファイル名は「名簿用」）を読んだうえで、
- * ★認証のやり方だけ★ を差し替えたものです。
- * 台帳の列・上書きの条件・管理者メール・LINE通知・受付完了メールは
- * すべて現行と同じ動きになるようにしてあります。
+ * v52 からの変更は次の4点だけです。
+ *   1. 認証：合言葉(SECRET)をやめ、LINE が発行した ID トークンを LINE 自身に検証させる。
+ *      prefill は userId を受け取らなくなり、検証結果の sub でしか引けない。
+ *      → 「合言葉 + 他人の userId」で個人情報を引き出せた穴が塞がる。
+ *   2. 移行期間だけ旧方式も通す互換スイッチ（公開の順番のため。公開後に false に戻す）。
+ *   3. 台帳への書き込みを LockService で囲った。
+ *      v52 は「最終行を読む → その次の行に書く」の間に排他がなく、
+ *      2人が同時に送信すると同じ行に上書きし合って片方が消える可能性があった。
+ *   4. 管理画面の一覧が メール／紹介者／会社名／領収書／備考／LINE表示名／登録日時 も返す。
+ *      （印刷機能でこれらを選べるようにするため）
  *
- * ── 何が変わるか ────────────────────────────────
- *   これまで： index.html に書いてある合言葉(SECRET)が一致すれば通った。
- *              合言葉はブラウザに配られるので誰でも読める。
- *              とくに action=prefill は「合言葉 + 相手の userId」だけで
- *              その人の姓名・フリガナ・携帯・メール・生年月日を返していた。
- *   これから： LINE が発行した ID トークンを LINE 自身に検証させ、
- *              返ってきた sub を userId として使う。
- *              userId を自己申告に頼らないので、他人の分は引けなくなる。
+ * 通知の文面（本人への LINE・本人へのメール・幹事あてメール）は v52 のままで、
+ * 一字も変えていません。台帳の17列・同じ回の同じ姓名なら上書きする動きも同じです。
  *
- *   管理画面の一覧(action=list)はアクセストークン方式のまま。admin.html は変更なし。
- * ─────────────────────────────────────────────
- *
- * ★貼り付ける前に、下の「設定」の ① ② ③ を現行の「名簿用」から移してください。
- *   このファイルには秘密の値を書いていません（リポジトリは公開されているため）。
+ * ★貼る前に、下の ① ② ③ を「差し替える前の 名簿用」から写してください。
+ *   このファイルには秘密の値を書いていません。
  */
 
 /* ============================================================
    設定
    ============================================================ */
 
-/** ① LINEログイン（LIFF）のチャネルID。LIFF ID「2010392345-WMpqQivB」の
- *     ハイフンより前の数字。LINE Developers で実物を確認して貼る */
+/** ① LINEログイン（LIFF）のチャネルID。
+ *     LIFF ID「2010392345-WMpqQivB」のハイフンより前の数字と同じはずですが、
+ *     必ず LINE Developers コンソールで実物を確認してください。
+ *     ここが空、または間違っていると ID トークンの検証は必ず失敗します。 */
 const CHANNEL_ID = '';
 
-/** ② 現行の「名簿用」から、値をそのまま移す */
-const LINE_TOKEN  = '';   // ← 現行の LINE_TOKEN（チャネルアクセストークン）
-const ADMIN_EMAIL = '';   // ← 現行の ADMIN_EMAIL
+/** ② 差し替える前の「名簿用」から、同名の値をそのまま写す */
+const LINE_TOKEN  = '';   // ← v52 の LINE_TOKEN
+const ADMIN_EMAIL = '';   // ← v52 の ADMIN_EMAIL
 
-/** ③ 移行期間だけ旧方式も受け付ける。新しい index.html を公開したら
- *     ACCEPT_LEGACY_SECRET を false、LEGACY_SECRET を '' に戻して版を上げる */
+/** ③ 移行期間だけ旧方式も受け付ける。
+ *     新しい index.html を公開したら false / '' に戻して、もう一度版を上げる */
 const ACCEPT_LEGACY_SECRET = true;
-const LEGACY_SECRET = '';   // ← 現行の SECRET
+const LEGACY_SECRET = '';   // ← v52 の SECRET
 
-/* 以下は現行と同じ値。変更不要 */
+/* 以下は v52 と同じ値。変更不要 */
 const SHEET_ID     = '1NIhnBlwMC4LVP0pPpx1ZHYROtDdbpNBevU1xlvOM5uc';
 const SHEET_NAME   = 'LINE登録';
 const ADMIN_USERID = 'Uf4fdbb2775ec9f55aea2e070c8252a73';
@@ -51,17 +51,17 @@ const HEADER = [
   '紹介者','会社参加','会社名','領収書','備考','回','性別'
 ];
 
-const NAME_COL   = 4;    // 姓名
-const PHONE_COL  = 6;    // 携帯番号
-const EVENT_COL  = 16;   // 回
-const LASTCOL    = 17;
+const NAME_COL  = 4;    // 姓名
+const PHONE_COL = 6;    // 携帯番号
+const EVENT_COL = 16;   // 回
+const LASTCOL   = 17;
 
 /* ============================================================
    認証
    ============================================================ */
 
 /** ID トークンを LINE に検証させる。戻り値の userId は詐称できない */
-function verifyIdToken_(idToken){
+function verifyIdToken_(idToken) {
   if (!idToken || !CHANNEL_ID) return null;
   try {
     const res = UrlFetchApp.fetch('https://api.line.me/oauth2/v2.1/verify', {
@@ -78,8 +78,8 @@ function verifyIdToken_(idToken){
   } catch (e) { return null; }
 }
 
-/** 管理画面の一覧用。現行の verifyAdmin と同じ */
-function verifyAdmin(token){
+/** 管理画面の一覧用。v52 と同じ */
+function verifyAdmin(token) {
   if (!token || !ADMIN_USERID) return false;
   try {
     const res = UrlFetchApp.fetch('https://api.line.me/v2/profile', {
@@ -91,6 +91,16 @@ function verifyAdmin(token){
   } catch (e) { return false; }
 }
 
+/** 送信者を決める。ID トークンが本筋、互換スイッチが入っている間だけ旧方式も通す */
+function resolveSender_(src) {
+  const me = verifyIdToken_(src.idToken);
+  if (me) return { userId: me.userId, displayName: me.displayName || src.displayName || '' };
+  if (ACCEPT_LEGACY_SECRET && LEGACY_SECRET && src.secret === LEGACY_SECRET) {
+    return { userId: src.userId || '', displayName: src.displayName || '' };
+  }
+  return null;
+}
+
 /* ============================================================
    受け口
    ============================================================ */
@@ -99,17 +109,12 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
 
   if (p.action === 'prefill') {
-    /* ★ userId は「こちらで検証した値」しか使わない。
-       p.userId（自己申告）は見ない＝他人の分は引けない */
-    let userId = '';
-    const me = verifyIdToken_(p.idToken);
-    if (me) {
-      userId = me.userId;
-    } else if (ACCEPT_LEGACY_SECRET && LEGACY_SECRET && p.secret === LEGACY_SECRET) {
-      userId = p.userId || '';                 // 移行期間だけの旧方式
-    }
+    /* ★ userId は検証した値しか使わない。p.userId（自己申告）は見ない */
+    const who = resolveSender_(p);
     let data = null;
-    if (userId) { try { data = findLatestByUser(userId); } catch (err) { data = null; } }
+    if (who && who.userId) {
+      try { data = findLatestByUser(who.userId); } catch (err) { data = null; }
+    }
     return out_(p.callback, data || {});
   }
 
@@ -135,22 +140,47 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
 
-    /* ★ここが今回の肝。合言葉ではなく ID トークンで確かめる */
-    let userId = '', displayName = '';
-    const me = verifyIdToken_(d.idToken);
-    if (me) {
-      userId = me.userId;
-      displayName = me.displayName || d.displayName || '';
-    } else if (ACCEPT_LEGACY_SECRET && LEGACY_SECRET && d.secret === LEGACY_SECRET) {
-      userId = d.userId || '';
-      displayName = d.displayName || '';
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({ result: 'forbidden' }))
-        .setMimeType(ContentService.MimeType.JSON);
+    /* ── 1. 誰からの送信かを確かめる ───────────────── */
+    const who = resolveSender_(d);
+    if (!who || !who.userId) {
+      return json_({ result: 'forbidden' });
     }
-    d.userId = userId;               // 自己申告を検証済みの値で必ず上書きする
-    d.displayName = displayName;
+    d.userId = who.userId;                 // 自己申告を検証済みの値で必ず上書きする
+    d.displayName = who.displayName;
 
+    /* ── 2. 台帳に書く。ここだけ排他をかける ───────── */
+    saveRow_(d);
+
+    /* ── 3. 通知。ここから先で何が起きても、申込の成否には影響しない ──
+       3つとも個別に try/catch で囲ってあるので、1つ失敗しても他は送られ、
+       戻り値は必ず ok になる。 */
+    notifyAdmin_(d);
+    notifyLine_(d);
+    notifyMail_(d);
+
+    return json_({ result: 'ok' });
+
+  } catch (err) {
+    return json_({ result: 'error', message: String(err) });
+  }
+}
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ============================================================
+   台帳
+   ============================================================ */
+
+/** 書き込み。同じ回の同じ姓名があれば上書き（代理登録があるので姓名で判定する）。
+ *  「最終行を読む → 次の行に書く」の間に他の送信が割り込むと行が潰れるので、
+ *  読みから書きまでをまとめて排他する。 */
+function saveRow_(d) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
     const ss = SpreadsheetApp.openById(SHEET_ID);
     let sheet = ss.getSheetByName(SHEET_NAME);
     if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
@@ -165,7 +195,6 @@ function doPost(e) {
       d.eventNo || '', d.gender || ''
     ];
 
-    /* 同じ回の同じ姓名があれば上書き（代理登録があるので userId では判定しない）*/
     const name = d.name || '';
     const eventNo = d.eventNo || '';
     let targetRow = -1;
@@ -182,68 +211,13 @@ function doPost(e) {
 
     sheet.getRange(targetRow, PHONE_COL).setNumberFormat('@');
     sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
-
-    /* 幹事あてのお知らせ */
-    try {
-      if (ADMIN_EMAIL) {
-        MailApp.sendEmail(
-          ADMIN_EMAIL,
-          '【多胡杯】第' + (d.eventNo || '') + '回 登録: ' + (d.name || '') + '（' + (d.join || '') + '）',
-          '新しい参加登録がありました。\n\n' +
-          '回: 第' + (d.eventNo || '') + '回\n' +
-          '氏名: ' + (d.name || '') + '（' + (d.kana || '') + '）\n' +
-          '性別: ' + (d.gender || '') + '\n' +
-          '携帯: ' + (d.phone || '') + '\n' +
-          'メール: ' + (d.email || '') + '\n' +
-          '参加: ' + (d.join || '') + '\n' +
-          '生年月日: ' + (d.birth || '') + '\n' +
-          '初参加: ' + (d.firstTime || '') + ' / 紹介者: ' + (d.referrer || '') + '\n' +
-          '会社参加: ' + (d.company || '') + ' / 会社名: ' + (d.companyName || '') + ' / 領収書: ' + (d.receipt || '') + '\n' +
-          '備考: ' + (d.note || '') + '\n'
-        );
-      }
-    } catch (e2) {}
-
-    /* 本人への LINE 通知 */
-    try {
-      if (LINE_TOKEN && d.userId && d.join) {
-        UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
-          method: 'post',
-          contentType: 'application/json',
-          headers: { 'Authorization': 'Bearer ' + LINE_TOKEN },
-          payload: JSON.stringify({ to: d.userId, messages: [{ type: 'text', text: buildConfirmText(d) }] }),
-          muteHttpExceptions: true
-        });
-      }
-    } catch (e3) {}
-
-    /* メアドを入れた人には、LINE と同じ内容をメールでも送る */
-    try {
-      const mailTo = String(d.email || '').trim();
-      if (mailTo && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailTo)) {
-        MailApp.sendEmail({
-          to: mailTo,
-          subject: '【多胡杯】第' + (d.eventNo || '') + '回 参加登録を受け付けました',
-          body: buildConfirmText(d),
-          name: '多胡杯ゴルフコンペ'
-        });
-      }
-    } catch (e4) {}
-
-    return ContentService.createTextOutput(JSON.stringify({ result: 'ok' }))
-      .setMimeType(ContentService.MimeType.JSON);
-
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ result: 'error', message: String(err) }))
-      .setMimeType(ContentService.MimeType.JSON);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
   }
 }
 
-/* ============================================================
-   台帳の読み出し
-   ============================================================ */
-
-/** その人自身の最新の登録（prefill 用）。現行と同じ項目 */
+/** その人自身の最新の登録（prefill 用）。v52 と同じ項目 */
 function findLatestByUser(userId) {
   const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
   if (!sheet) return null;
@@ -264,9 +238,8 @@ function findLatestByUser(userId) {
   return null;
 }
 
-/** 管理画面の一覧。
- *  ★印刷機能で選べる項目をすべて返すように、現行から
- *    メール／紹介者／会社名／領収書／備考／LINE表示名／登録日時 を足してある */
+/** 管理画面の一覧。v52 から
+ *  メール／紹介者／会社名／領収書／備考／LINE表示名／登録日時 を足してある */
 function getAllRows() {
   const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
   if (!sheet) return [];
@@ -313,8 +286,55 @@ function fmtDateTime_(v) {
 }
 
 /* ============================================================
-   通知の本文（現行のまま）
+   通知（文面は v52 のまま）
    ============================================================ */
+
+function notifyAdmin_(d) {
+  try {
+    if (!ADMIN_EMAIL) return;
+    const subject = '【多胡杯】第' + (d.eventNo || '') + '回 登録: ' + (d.name || '') + '（' + (d.join || '') + '）';
+    const body =
+      '新しい参加登録がありました。\n\n' +
+      '回: 第' + (d.eventNo || '') + '回\n' +
+      '氏名: ' + (d.name || '') + '（' + (d.kana || '') + '）\n' +
+      '性別: ' + (d.gender || '') + '\n' +
+      '携帯: ' + (d.phone || '') + '\n' +
+      'メール: ' + (d.email || '') + '\n' +
+      '参加: ' + (d.join || '') + '\n' +
+      '生年月日: ' + (d.birth || '') + '\n' +
+      '初参加: ' + (d.firstTime || '') + ' / 紹介者: ' + (d.referrer || '') + '\n' +
+      '会社参加: ' + (d.company || '') + ' / 会社名: ' + (d.companyName || '') + ' / 領収書: ' + (d.receipt || '') + '\n' +
+      '備考: ' + (d.note || '') + '\n';
+    MailApp.sendEmail(ADMIN_EMAIL, subject, body);
+  } catch (e) {}
+}
+
+function notifyLine_(d) {
+  try {
+    if (!LINE_TOKEN || !d.userId || !d.join) return;
+    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + LINE_TOKEN },
+      payload: JSON.stringify({ to: d.userId, messages: [{ type: 'text', text: buildConfirmText(d) }] }),
+      muteHttpExceptions: true
+    });
+  } catch (e) {}
+}
+
+function notifyMail_(d) {
+  try {
+    const mailTo = String(d.email || '').trim();
+    if (!mailTo || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailTo)) return;
+    MailApp.sendEmail({
+      to: mailTo,
+      subject: '【多胡杯】第' + (d.eventNo || '') + '回 参加登録を受け付けました',
+      body: buildConfirmText(d),
+      name: '多胡杯ゴルフコンペ'
+    });
+  } catch (e) {}
+}
+
 function buildConfirmText(d) {
   const no = d.eventNo || '';
   if (d.join !== '参加する') {
