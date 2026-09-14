@@ -354,7 +354,7 @@ async function submitForm(){
      待つのをやめても失う情報はない。 */
   let shown = false;
   const finish = function(){ if(!shown){ shown = true; showDone(); } };
-  setTimeout(finish, 3000);
+  setTimeout(finish, 1000);
 
   try{
     // text/plain で送るとCORSのプリフライトを避けられる（GAS向けの定番）
