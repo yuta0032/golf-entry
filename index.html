@@ -352,18 +352,28 @@ async function submitForm(){
   const btn = document.getElementById('btn');
   btn.disabled = true; btn.textContent = '送信中…';
 
+  /* 応答を待ち続けない。GAS はメール2通とLINE通知を送り終えてから返すので
+     数秒〜十数秒かかり、LINE内ブラウザではその間に画面が止まって
+     完了表示に切り替わらないことがある。keepalive を付けてあるので、
+     完了画面に切り替えたあとも送信はそのまま続く。
+     もともと成功でも失敗でも showDone() を呼んでいて応答の中身は見ていないので、
+     待つのをやめても失う情報はない。 */
+  let shown = false;
+  const finish = function(){ if(!shown){ shown = true; showDone(); } };
+  setTimeout(finish, 3000);
+
   try{
     // text/plain で送るとCORSのプリフライトを避けられる（GAS向けの定番）
     await fetch(GAS_URL, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      keepalive: true
     });
-    showDone();
   }catch(err){
-    // 多くの場合データ自体は書き込まれているが、念のため案内
-    showDone();
+    // 多くの場合データ自体は書き込まれている
   }
+  finish();
 }
 
 function showDone(){
