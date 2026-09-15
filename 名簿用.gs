@@ -159,15 +159,16 @@ function doGet(e) {
        どちらも無い／不正なときも、必ず JSONP で返す。素のテキストを返すと
        呼び出し側は script タグで読むため JavaScript として壊れ、
        コールバックが呼ばれないまま画面が固まる */
+    /* v は診断用。管理画面が「どの版の GAS に当たっているか」を出せるようにする */
     if (p.token) {
       return out_(p.callback, verifyAdmin(p.token)
-        ? { rows: getAllRows() } : { error: 'forbidden' });
+        ? { v: 55, rows: getAllRows() } : { v: 55, error: 'forbidden' });
     }
     if (p.id_token) {
       return out_(p.callback, verifyAdminByIdToken_(p.id_token)
-        ? { rows: getAllRows() } : { error: 'forbidden' });
+        ? { v: 55, rows: getAllRows() } : { v: 55, error: 'forbidden' });
     }
-    return out_(p.callback, { error: 'no token' });
+    return out_(p.callback, { v: 55, error: 'no token' });
   }
 
   /* callback を付けて呼ばれている＝相手は script タグで読む。
