@@ -133,6 +133,10 @@ function lap(name){
 let profile = { userId:'', displayName:'' };
 let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
+/* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
+   BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
+const BUILD = '2026-09-16a';
+const DIAG = { tok:'none', res:'', t:0 };
 let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
@@ -232,18 +236,9 @@ async function main(){
   /* 資格情報。アクセストークンが取れないブラウザがあるので、
      取れなければ ID トークンで代用する（GAS 側がどちらでも受ける） */
   if(!hasCredential()){
-    /* 一度だけログインをやり直す。それでも駄目なら LINE アプリで開いてもらう */
-    if(!markedRelogin()){
-      lap('資格情報が無いのでログインし直す');
-      markRelogin();
-      liff.login({ redirectUri: window.location.href });
-      return;
-    }
-    lap('ログインし直しても資格情報が取れない');
-    showOpenInLine();
+    recoverOnce('no-credential');
     return;
   }
-  clearRelogin();
 
   if(!ADMIN_USERID){ showSetup(); return; }
   if(profile.userId !== ADMIN_USERID){ showDenied(); return; }
@@ -284,17 +279,47 @@ function showDenied(){
      代わりに「読み込み直す」ボタンを出して、押すかどうかは人が決める
    ・60秒であきらめて、状況を説明して終わる */
 const LIST_SLOW_MS   = 8000;
-const LIST_GIVEUP_MS = 60000;
+const LIST_GIVEUP_MS = 20000;
 
 /* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
 function credentialParam(){
   let t = '';
   try { t = liff.getAccessToken() || ''; } catch(e){}
-  if(t) return '&token=' + encodeURIComponent(t);
+  if(t){ DIAG.tok = 'access'; return '&token=' + encodeURIComponent(t); }
   let i = '';
   try { i = liff.getIDToken() || ''; } catch(e){}
-  if(i) return '&id_token=' + encodeURIComponent(i);
+  if(i){ DIAG.tok = 'id'; return '&id_token=' + encodeURIComponent(i); }
+  DIAG.tok = 'none';
   return '';
+}
+
+/* 何で失敗しても、まず一度だけログインをやり直す。
+   外部ブラウザではトークンが一日で切れるが isLoggedIn() は true のままなので、
+   「取れている＝使える」とは限らない。取り直せば大抵これで通る。
+   2回やっても駄目なら、LINEアプリで開いてもらう。 */
+function recoverOnce(why){
+  DIAG.res = why;
+  if(!markedRelogin()){
+    markRelogin();
+    lap('自動でログインし直す（' + why + '）');
+    app.innerHTML = '<div class="note">ログインし直しています…' + diagHtml() + '</div>';
+    try { liff.login({ redirectUri: window.location.href }); return; } catch(e){}
+  }
+  showOpenInLine();
+}
+
+function diagHtml(){
+  let login = '?';
+  try { login = String(!!liff.isLoggedIn()); } catch(e){}
+  return '<div style="margin-top:14px;font-size:11px;color:#9aa39b;line-height:1.5">'
+    + 'v=' + BUILD + ' login=' + login + ' tok=' + DIAG.tok
+    + ' res=' + (DIAG.res || '-') + ' t=' + DIAG.t + 's</div>';
+}
+function showDiag(){
+  const el = document.createElement('div');
+  el.innerHTML = diagHtml();
+  const w = document.querySelector('.wrap');
+  if(w) w.appendChild(el);
 }
 function hasCredential(){ return credentialParam() !== ''; }
 
@@ -311,7 +336,9 @@ function showOpenInLine(){
     + '<b>LINEアプリから開いてください。</b>'
     + '<div class="uid" style="text-align:left">' + escapeHtml(url) + '</div>'
     + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="' + escapeHtml(url) + '">LINEで開く</a>'
-    + '<br><br><button class="pbtn" onclick="reLogin()">もう一度ログインする</button></div>';
+    + '<br><br><button class="pbtn" onclick="reLogin()">もう一度ログインする</button>'
+    + '<p class="hint" style="margin-top:12px">別のLINEアカウントでログインしている場合も、これが出ます。</p>'
+    + diagHtml() + '</div>';
 }
 
 function loadList(){
@@ -330,8 +357,17 @@ function loadList(){
   window.__list = function(res){
     if(settled) return;
     settled = true; clearAll();
+    DIAG.t = Math.round((Date.now() - t0) / 1000);
     lap('一覧を受信');
-    try{ renderDash(res); }catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; }
+    if(!res || res.error){
+      /* forbidden も no token も、まずは取り直せば通ることが多い */
+      recoverOnce(res && res.error ? String(res.error) : 'error');
+      return;
+    }
+    DIAG.res = 'ok';
+    clearRelogin();                 // 出たら印を消す。翌日また1回使えるように
+    try{ renderDash(res); showDiag(); }
+    catch(e){ app.innerHTML='<div class="note">表示に失敗しました。</div>'; }
     lap('描画完了');
   };
 
@@ -347,13 +383,14 @@ function loadList(){
   giveUpTimer = setTimeout(function(){
     if(settled) return;
     settled = true; clearAll();
-    waiting('名簿を読み込めませんでした。少し待ってからお試しください。');
+    DIAG.t = Math.round((Date.now() - t0) / 1000);
+    recoverOnce('timeout');
   }, LIST_GIVEUP_MS);
 
   const cred = credentialParam();
   if(!cred){
     settled = true; clearAll();
-    showOpenInLine();
+    recoverOnce('no-credential');
     return;
   }
   const s = document.createElement('script');
@@ -362,7 +399,8 @@ function loadList(){
   s.onerror = function(){
     if(settled) return;
     settled = true; clearAll();
-    waiting('サーバーに接続できませんでした。');
+    DIAG.t = Math.round((Date.now() - t0) / 1000);
+    recoverOnce('neterr');
   };
   /* 読み込みは終わったのに __list が呼ばれない＝返ってきたものが
      JavaScript ではなかった、ということ。黙って待ち続けても無駄なので
@@ -371,7 +409,8 @@ function loadList(){
     setTimeout(function(){
       if(settled) return;
       settled = true; clearAll();
-      waiting('サーバーの応答を読み取れませんでした。ログインし直すと直ることがあります。');
+      DIAG.t = Math.round((Date.now() - t0) / 1000);
+      recoverOnce('notjs');        // 読めたのに呼ばれない＝応答が JavaScript でない
     }, 0);
   };
   document.body.appendChild(s);
