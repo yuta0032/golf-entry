@@ -229,6 +229,18 @@ async function main(){
     lap('本人確認（getProfile・LINEと1往復）');
   }
   token = liff.getAccessToken();
+  if(!token){
+    /* 外部ブラウザでログインから戻った直後など、アクセストークンが
+       取れていないことがある。このまま空で投げると GAS が
+       「OK: バックエンドは動いています。」という素のテキストを返し、
+       それを script として読むので何も起きず画面が固まる。手前で止める。 */
+    lap('アクセストークンが取れていない');
+    app.innerHTML =
+      '<div class="note">LINEのログイン情報を取得できませんでした。<br>'
+      + 'ログインし直すと表示できます。'
+      + '<br><br><button class="pbtn" onclick="reLogin()">ログインし直す</button></div>';
+    return;
+  }
 
   if(!ADMIN_USERID){ showSetup(); return; }
   if(profile.userId !== ADMIN_USERID){ showDenied(); return; }
@@ -315,7 +327,22 @@ function loadList(){
     settled = true; clearAll();
     waiting('サーバーに接続できませんでした。');
   };
+  /* 読み込みは終わったのに __list が呼ばれない＝返ってきたものが
+     JavaScript ではなかった、ということ。黙って待ち続けても無駄なので
+     すぐ知らせる。ブラウザによっては onerror が出ないので、この受けが要る。 */
+  s.onload = function(){
+    setTimeout(function(){
+      if(settled) return;
+      settled = true; clearAll();
+      waiting('サーバーの応答を読み取れませんでした。ログインし直すと直ることがあります。');
+    }, 0);
+  };
   document.body.appendChild(s);
+}
+
+function reLogin(){
+  try { liff.login({ redirectUri: window.location.href }); }
+  catch(e){ location.reload(); }
 }
 
 function renderDash(res){
