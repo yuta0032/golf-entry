@@ -132,6 +132,7 @@ function lap(name){
 }
 let profile = { userId:'', displayName:'' };
 let token = '';
+const RELOGIN_KEY = 'tagocup.admin.relogin';
 let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
@@ -228,19 +229,21 @@ async function main(){
     profile = await liff.getProfile();
     lap('本人確認（getProfile・LINEと1往復）');
   }
-  token = liff.getAccessToken();
-  if(!token){
-    /* 外部ブラウザでログインから戻った直後など、アクセストークンが
-       取れていないことがある。このまま空で投げると GAS が
-       「OK: バックエンドは動いています。」という素のテキストを返し、
-       それを script として読むので何も起きず画面が固まる。手前で止める。 */
-    lap('アクセストークンが取れていない');
-    app.innerHTML =
-      '<div class="note">LINEのログイン情報を取得できませんでした。<br>'
-      + 'ログインし直すと表示できます。'
-      + '<br><br><button class="pbtn" onclick="reLogin()">ログインし直す</button></div>';
+  /* 資格情報。アクセストークンが取れないブラウザがあるので、
+     取れなければ ID トークンで代用する（GAS 側がどちらでも受ける） */
+  if(!hasCredential()){
+    /* 一度だけログインをやり直す。それでも駄目なら LINE アプリで開いてもらう */
+    if(!markedRelogin()){
+      lap('資格情報が無いのでログインし直す');
+      markRelogin();
+      liff.login({ redirectUri: window.location.href });
+      return;
+    }
+    lap('ログインし直しても資格情報が取れない');
+    showOpenInLine();
     return;
   }
+  clearRelogin();
 
   if(!ADMIN_USERID){ showSetup(); return; }
   if(profile.userId !== ADMIN_USERID){ showDenied(); return; }
@@ -283,6 +286,34 @@ function showDenied(){
 const LIST_SLOW_MS   = 8000;
 const LIST_GIVEUP_MS = 60000;
 
+/* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
+function credentialParam(){
+  let t = '';
+  try { t = liff.getAccessToken() || ''; } catch(e){}
+  if(t) return '&token=' + encodeURIComponent(t);
+  let i = '';
+  try { i = liff.getIDToken() || ''; } catch(e){}
+  if(i) return '&id_token=' + encodeURIComponent(i);
+  return '';
+}
+function hasCredential(){ return credentialParam() !== ''; }
+
+/* ログインのやり直しを1回だけにするための印。
+   sessionStorage が使えない環境もあるので、必ず try で囲う */
+function markedRelogin(){ try { return sessionStorage.getItem(RELOGIN_KEY) === '1'; } catch(e){ return true; } }
+function markRelogin(){ try { sessionStorage.setItem(RELOGIN_KEY, '1'); } catch(e){} }
+function clearRelogin(){ try { sessionStorage.removeItem(RELOGIN_KEY); } catch(e){} }
+
+function showOpenInLine(){
+  const url = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
+  app.innerHTML =
+    '<div class="note">このブラウザではLINEのログイン情報を取得できませんでした。<br>'
+    + '<b>LINEアプリから開いてください。</b>'
+    + '<div class="uid" style="text-align:left">' + escapeHtml(url) + '</div>'
+    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="' + escapeHtml(url) + '">LINEで開く</a>'
+    + '<br><br><button class="pbtn" onclick="reLogin()">もう一度ログインする</button></div>';
+}
+
 function loadList(){
   lap('一覧の取得を開始');
   const t0 = Date.now();
@@ -319,8 +350,14 @@ function loadList(){
     waiting('名簿を読み込めませんでした。少し待ってからお試しください。');
   }, LIST_GIVEUP_MS);
 
+  const cred = credentialParam();
+  if(!cred){
+    settled = true; clearAll();
+    showOpenInLine();
+    return;
+  }
   const s = document.createElement('script');
-  s.src = GAS_URL + '?action=list&token=' + encodeURIComponent(token)
+  s.src = GAS_URL + '?action=list' + cred
         + '&callback=__list&t=' + Date.now();   // 途中のキャッシュに当たらないようにする
   s.onerror = function(){
     if(settled) return;
@@ -341,6 +378,7 @@ function loadList(){
 }
 
 function reLogin(){
+  clearRelogin();
   try { liff.login({ redirectUri: window.location.href }); }
   catch(e){ location.reload(); }
 }
