@@ -139,10 +139,18 @@ function doGet(e) {
     return out_(p.callback, data || {});
   }
 
-  if (p.action === 'list' && p.token) {
+  if (p.action === 'list') {
+    /* トークンが空でもここで受ける。以前は下の素のテキストに落ちていて、
+       呼び出し側が script タグで読むため JavaScript として壊れ、
+       コールバックが呼ばれず画面が固まっていた */
+    if (!p.token) return out_(p.callback, { error: 'no token' });
     const ok = verifyAdmin(p.token);
     return out_(p.callback, ok ? { rows: getAllRows() } : { error: 'forbidden' });
   }
+
+  /* callback を付けて呼ばれている＝相手は script タグで読む。
+     素のテキストを返すと必ず壊れるので、必ず JavaScript の形で返す */
+  if (p.callback) return out_(p.callback, { error: 'bad request' });
 
   return ContentService.createTextOutput('OK: バックエンドは動いています。')
     .setMimeType(ContentService.MimeType.TEXT);
