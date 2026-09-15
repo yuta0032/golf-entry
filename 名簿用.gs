@@ -112,6 +112,18 @@ function verifyAdmin(token) {
   } catch (e) { return false; }
 }
 
+/** 管理画面の一覧用（ID トークン版）。
+ *  外部ブラウザでは liff.getAccessToken() が空になることがあるので、
+ *  ID トークンでも幹事かどうかを判定できるようにする。
+ *  検証は verifyIdToken_ と同じ LINE のエンドポイントで、
+ *  UrlFetchApp は muteHttpExceptions:true、全体を try/catch で囲ってあるので
+ *  ここから例外が外に出ることはない（＝素のテキストに落ちない）。 */
+function verifyAdminByIdToken_(idToken) {
+  if (!idToken || !ADMIN_USERID) return false;
+  const me = verifyIdToken_(idToken);
+  return !!(me && me.userId === ADMIN_USERID);
+}
+
 /** 送信者を決める。ID トークンが本筋、互換スイッチが入っている間だけ旧方式も通す */
 function resolveSender_(src) {
   const me = verifyIdToken_(src.idToken);
@@ -140,12 +152,22 @@ function doGet(e) {
   }
 
   if (p.action === 'list') {
-    /* トークンが空でもここで受ける。以前は下の素のテキストに落ちていて、
-       呼び出し側が script タグで読むため JavaScript として壊れ、
-       コールバックが呼ばれず画面が固まっていた */
-    if (!p.token) return out_(p.callback, { error: 'no token' });
-    const ok = verifyAdmin(p.token);
-    return out_(p.callback, ok ? { rows: getAllRows() } : { error: 'forbidden' });
+    /* 資格情報は2通り受ける。
+       ・token    … LIFF のアクセストークン（従来）
+       ・id_token … LIFF の ID トークン。外部ブラウザだとアクセストークンが
+                    取れないことがあるので、その代わりに使う
+       どちらも無い／不正なときも、必ず JSONP で返す。素のテキストを返すと
+       呼び出し側は script タグで読むため JavaScript として壊れ、
+       コールバックが呼ばれないまま画面が固まる */
+    if (p.token) {
+      return out_(p.callback, verifyAdmin(p.token)
+        ? { rows: getAllRows() } : { error: 'forbidden' });
+    }
+    if (p.id_token) {
+      return out_(p.callback, verifyAdminByIdToken_(p.id_token)
+        ? { rows: getAllRows() } : { error: 'forbidden' });
+    }
+    return out_(p.callback, { error: 'no token' });
   }
 
   /* callback を付けて呼ばれている＝相手は script タグで読む。
