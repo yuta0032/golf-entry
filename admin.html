@@ -135,7 +135,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16f';
+const BUILD = '2026-09-16g';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -219,7 +219,19 @@ async function main(){
   lap('開始');
   await liff.init({ liffId: LIFF_ID });
   lap('liff.init 完了');
-  if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
+  scrubUrl();          // 使用済みの code を住所欄に残さない
+  if(!liff.isLoggedIn()){
+    if(!startLogin()){
+      /* すでにログインの途中。二重に始めると引換券が食い違う */
+      app.innerHTML = '<div class="note">ログインの途中です。'
+        + '<br>60秒ほど待つと、やり直せます。'
+        + '<br><br>' + openInLineHtml()
+        + '<br><br><button class="pbtn" onclick="reLogin()">やり直す</button>'
+        + diagHtml() + '</div>';
+    }
+    return;
+  }
+  clearLoginFlight();   // ここまで来た＝ログインは片付いた（未ログインのままでは来ない）
 
   /* 幹事かどうかは ID トークンを復号すれば分かる。
      liff.getProfile() は LINE と1往復するぶん表示が遅れるので、
@@ -312,7 +324,7 @@ function recoverOnce(why){
     markRelogin();
     lap('自動でログインし直す（' + why + '）');
     app.innerHTML = '<div class="note">ログインし直しています…' + diagHtml() + '</div>';
-    try { liff.login({ redirectUri: window.location.href }); return; } catch(e){}
+    if(startLogin()) return;
   }
   showOpenInLine();
 }
@@ -343,12 +355,10 @@ function markRelogin(){ try { sessionStorage.setItem(RELOGIN_KEY, '1'); } catch(
 function clearRelogin(){ try { sessionStorage.removeItem(RELOGIN_KEY); } catch(e){} }
 
 function showOpenInLine(){
-  const url = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
   app.innerHTML =
     '<div class="note">このブラウザではLINEのログイン情報を取得できませんでした。<br>'
     + '<b>LINEアプリから開いてください。</b>'
-    + '<div class="uid" style="text-align:left">' + escapeHtml(url) + '</div>'
-    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="' + escapeHtml(url) + '">LINEで開く</a>'
+    + openInLineHtml()
     + '<br><br><button class="pbtn" onclick="reLogin()">もう一度ログインする</button>'
     + '<p class="hint" style="margin-top:12px">別のLINEアカウントでログインしている場合も、これが出ます。</p>'
     + diagHtml() + '</div>';
@@ -458,9 +468,65 @@ function loadList(attempt){
   document.body.appendChild(s);
 }
 
+/* LIFF がログインの戻りで付けてくる印。残ったまま再ログインすると、
+   古い code を持ったまま新しい引換券が作られて code_verifier does not match になる */
+const LIFF_PARAMS = ['code', 'state', 'liffClientId', 'liffRedirectUri', 'liff.state',
+                     'error', 'error_description', 'liffErrorCode'];
+
+/* LIFF の印を取り除いた、いまのページの URL */
+function cleanUrl(){
+  try {
+    const u = new URL(window.location.href);
+    LIFF_PARAMS.forEach(function(k){ u.searchParams.delete(k); });
+    return u.toString();
+  } catch(e){ return window.location.href; }
+}
+
+/* 戻ってきた後の住所欄から印を消す。
+   このまま再読込されると、使用済みの code をもう一度引き換えようとして失敗する */
+function scrubUrl(){
+  try {
+    const now = window.location.href;
+    const cleaned = cleanUrl();
+    if(cleaned !== now && window.history && window.history.replaceState){
+      window.history.replaceState(null, '', cleaned);
+    }
+  } catch(e){}
+}
+
+/* ログインの二重開始よけ。
+   LIFF は「引換券（code_verifier）」を1組しか覚えていないので、前のログインが
+   終わらないうちに次を始めると、古い code と新しい引換券が食い違って
+   「code_verifier does not match」になる。60秒は次を始めない。
+   タブをまたぐので localStorage に置く（sessionStorage だと別タブで消える）。 */
+const LOGIN_FLIGHT_KEY = 'tagocup.admin.loginAt';
+/* LINE アプリで開くための入口。うまくいかないときの逃げ道として各所に出す */
+const LIFF_OPEN_URL = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
+function openInLineHtml(){
+  return '<div class="uid" style="text-align:left">' + escapeHtml(LIFF_OPEN_URL) + '</div>'
+    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="'
+    + escapeHtml(LIFF_OPEN_URL) + '">LINEで開く</a>';
+}
+function loginInFlight(){
+  try {
+    const t = Number(localStorage.getItem(LOGIN_FLIGHT_KEY) || 0);
+    return !!t && (Date.now() - t) < 60000;
+  } catch(e){ return false; }
+}
+function markLoginStart(){ try { localStorage.setItem(LOGIN_FLIGHT_KEY, String(Date.now())); } catch(e){} }
+function clearLoginFlight(){ try { localStorage.removeItem(LOGIN_FLIGHT_KEY); } catch(e){} }
+
+/** ログインを始める。すでに始まっていれば何もしない（false を返す） */
+function startLogin(){
+  if(loginInFlight()) return false;
+  markLoginStart();
+  try { liff.login({ redirectUri: cleanUrl() }); return true; } catch(e){ return false; }
+}
+
 function reLogin(){
   clearRelogin();
-  try { liff.login({ redirectUri: window.location.href }); }
+  clearLoginFlight();
+  try { liff.login({ redirectUri: cleanUrl() }); }
   catch(e){ location.reload(); }
 }
 
@@ -748,7 +814,23 @@ function setText(id,t){ const el=document.getElementById(id); if(el) el.textCont
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
 main().catch(function(err){
-  app.innerHTML='<div class="note">読み込みに失敗しました。<br><small>'+escapeHtml(String(err))+'</small></div>';
+  const msg = String(err || '');
+  /* ログインの引換券が合わない類。住所欄の印を消して1回だけやり直せば通ることが多い */
+  if(/code_verifier|invalid_grant/i.test(msg) && !markedRelogin()){
+    markRelogin();
+    try {
+      app.innerHTML = '<div class="note">ログインし直しています…</div>';
+      window.location.replace(cleanUrl());
+      return;
+    } catch(e){}
+  }
+  clearLoginFlight();
+  app.innerHTML =
+    '<div class="note">読み込みに失敗しました。<br><small>' + escapeHtml(msg) + '</small>'
+    + '<br><br><b>LINEアプリから開くと確実です。</b>'
+    + openInLineHtml()
+    + '<br><br><button class="pbtn" onclick="reLogin()">ログインし直す</button>'
+    + diagHtml() + '</div>';
 });
 </script>
 </body>
