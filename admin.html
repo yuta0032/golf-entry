@@ -135,7 +135,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16g';
+const BUILD = '2026-09-16h';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -220,18 +220,23 @@ async function main(){
   await liff.init({ liffId: LIFF_ID });
   lap('liff.init 完了');
   scrubUrl();          // 使用済みの code を住所欄に残さない
-  if(!liff.isLoggedIn()){
+
+  /* ★トークンが既にあるなら、ログインの途中かどうかに関係なく先へ進む。
+     ここで待たせると、実際には入れる人まで止めてしまう（16g の不具合） */
+  if(hasCredential()){
+    clearLoginFlight();
+    lap('資格情報あり（ログイン待ちはしない）');
+  } else if(!liff.isLoggedIn()){
     if(!startLogin()){
       /* すでにログインの途中。二重に始めると引換券が食い違う */
       app.innerHTML = '<div class="note">ログインの途中です。'
-        + '<br>60秒ほど待つと、やり直せます。'
+        + '<br>20秒ほど待つと、やり直せます。'
         + '<br><br>' + openInLineHtml()
         + '<br><br><button class="pbtn" onclick="reLogin()">やり直す</button>'
         + diagHtml() + '</div>';
     }
     return;
   }
-  clearLoginFlight();   // ここまで来た＝ログインは片付いた（未ログインのままでは来ない）
 
   /* 幹事かどうかは ID トークンを復号すれば分かる。
      liff.getProfile() は LINE と1往復するぶん表示が遅れるので、
@@ -500,6 +505,8 @@ function scrubUrl(){
    「code_verifier does not match」になる。60秒は次を始めない。
    タブをまたぐので localStorage に置く（sessionStorage だと別タブで消える）。 */
 const LOGIN_FLIGHT_KEY = 'tagocup.admin.loginAt';
+/* 二重開始を防げれば十分なので短くする。長くすると、入れるはずの人を足止めする */
+const LOGIN_FLIGHT_MS  = 20000;
 /* LINE アプリで開くための入口。うまくいかないときの逃げ道として各所に出す */
 const LIFF_OPEN_URL = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
 function openInLineHtml(){
@@ -510,7 +517,7 @@ function openInLineHtml(){
 function loginInFlight(){
   try {
     const t = Number(localStorage.getItem(LOGIN_FLIGHT_KEY) || 0);
-    return !!t && (Date.now() - t) < 60000;
+    return !!t && (Date.now() - t) < LOGIN_FLIGHT_MS;
   } catch(e){ return false; }
 }
 function markLoginStart(){ try { localStorage.setItem(LOGIN_FLIGHT_KEY, String(Date.now())); } catch(e){} }
