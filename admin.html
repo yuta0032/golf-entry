@@ -135,7 +135,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16d';
+const BUILD = '2026-09-16e';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -277,9 +277,13 @@ function showDenied(){
    取りに行く手段は fetch を先に使う。LINE 内ブラウザでは <script> の JSONP が
    読み込み完了も失敗も通知してこないことがあり、そうなると何も起きないため。
    3回目だけ従来の JSONP を保険として残す。 */
-const LIST_WAITS     = [20000, 20000, 40000];
+const LIST_WAITS     = [15000, 20000, 40000];
 const LIST_VIA       = ['fetch', 'fetch', 'jsonp'];
 const LIST_MAX_TRIES = LIST_WAITS.length;
+/* fetch の回は同時に2本投げて、先に正しく返った方を採る。
+   Google の窓口は同じ要求でも返る回と取りこぼす回があるため、
+   2本出しておくと片方が転んでも待たずに済む。負けた方は止める。 */
+const LIST_PARALLEL  = 2;
 
 /* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
 function credentialParam(){
@@ -317,6 +321,7 @@ function diagHtml(){
     + ' res=' + (DIAG.res || '-')
     + ' try=' + DIAG.times.length
     + ' via=' + (DIAG.via.join(',') || '-')
+    + ' par=' + LIST_PARALLEL
     + ' t=' + (DIAG.times.length ? DIAG.times.join('s,') + 's' : '-') + '</div>';
 }
 function showDiag(){
@@ -402,20 +407,35 @@ function loadList(attempt){
   if(via === 'fetch'){
     /* callback を付けなければ GAS は JSON を返す。応答を読むので CORS が要るが、
        /exec も転送先も access-control-allow-origin: * を返すことを確認済み */
-    const url = GAS_URL + '?action=list' + cred + '&t=' + Date.now();
-    let ctrl = null;
-    try { ctrl = new AbortController(); } catch(e){}
-    timer = setTimeout(function(){
-      if(ctrl){ try { ctrl.abort(); } catch(e){} }
-      retryOrGiveUp('timeout');
-    }, wait);
-    fetch(url, { method:'GET', redirect:'follow', signal: ctrl ? ctrl.signal : undefined })
-      .then(function(r){ return r.json(); })
-      .then(handle)
-      .catch(function(err){
+    const ctrls = [];
+    const abortAll = function(){
+      ctrls.forEach(function(c){ try { c.abort(); } catch(e){} });
+    };
+    const once = function(n){
+      let c = null;
+      try { c = new AbortController(); ctrls.push(c); } catch(e){}
+      const url = GAS_URL + '?action=list' + cred + '&t=' + Date.now() + '-' + n;
+      return fetch(url, { method:'GET', redirect:'follow', signal: c ? c.signal : undefined })
+        .then(function(r){ return r.json(); });
+    };
+
+    timer = setTimeout(function(){ abortAll(); retryOrGiveUp('timeout'); }, wait);
+
+    let fails = 0;
+    for(let i = 0; i < LIST_PARALLEL; i++){
+      once(i).then(function(res){
         if(settled) return;
-        retryOrGiveUp((err && err.name === 'AbortError') ? 'timeout' : 'fetchfail');
+        abortAll();                 // 勝った方を採る。負けた方は止める
+        handle(res);
+      }).catch(function(err){
+        fails++;
+        if(settled) return;
+        if(fails >= LIST_PARALLEL){
+          clearTimeout(timer);
+          retryOrGiveUp((err && err.name === 'AbortError') ? 'timeout' : 'fetchfail');
+        }
       });
+    }
     return;
   }
 
