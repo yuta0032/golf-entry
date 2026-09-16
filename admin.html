@@ -135,7 +135,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16e';
+const BUILD = '2026-09-16f';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -278,7 +278,11 @@ function showDenied(){
    読み込み完了も失敗も通知してこないことがあり、そうなると何も起きないため。
    3回目だけ従来の JSONP を保険として残す。 */
 const LIST_WAITS     = [15000, 20000, 40000];
-const LIST_VIA       = ['fetch', 'fetch', 'jsonp'];
+const LIST_VIA       = ['worker', 'worker', 'jsonp'];
+/* 名簿の中継役。Google の配信経路を通らずに済ませるために挟む。
+   空のままなら worker の回は自動で GAS 直行（fetch）に落ちるので、
+   Worker を止めても画面は死なない。 */
+const WORKER_URL     = 'https://golf-list.yuta-ce7.workers.dev';
 const LIST_MAX_TRIES = LIST_WAITS.length;
 /* fetch の回は同時に2本投げて、先に正しく返った方を採る。
    Google の窓口は同じ要求でも返る回と取りこぼす回があるため、
@@ -352,7 +356,8 @@ function showOpenInLine(){
 
 function loadList(attempt){
   attempt = attempt || 1;
-  const via  = LIST_VIA[attempt - 1] || 'jsonp';
+  let via = LIST_VIA[attempt - 1] || 'jsonp';
+  if(via === 'worker' && !WORKER_URL) via = 'fetch';   // 未設定なら今までどおり GAS 直行
   const wait = LIST_WAITS[attempt - 1] || 20000;
   lap('一覧の取得（' + attempt + '回目・' + via + '）');
   DIAG.via.push(via);
@@ -404,7 +409,7 @@ function loadList(attempt){
     return;
   }
 
-  if(via === 'fetch'){
+  if(via === 'worker' || via === 'fetch'){
     /* callback を付けなければ GAS は JSON を返す。応答を読むので CORS が要るが、
        /exec も転送先も access-control-allow-origin: * を返すことを確認済み */
     const ctrls = [];
@@ -414,7 +419,10 @@ function loadList(attempt){
     const once = function(n){
       let c = null;
       try { c = new AbortController(); ctrls.push(c); } catch(e){}
-      const url = GAS_URL + '?action=list' + cred + '&t=' + Date.now() + '-' + n;
+      /* Worker 側は action=list を固定しているので、渡すのは資格情報と t だけ */
+      const url = (via === 'worker')
+        ? WORKER_URL + '/list?' + cred.slice(1) + '&t=' + Date.now() + '-' + n
+        : GAS_URL + '?action=list' + cred + '&t=' + Date.now() + '-' + n;
       return fetch(url, { method:'GET', redirect:'follow', signal: c ? c.signal : undefined })
         .then(function(r){ return r.json(); });
     };

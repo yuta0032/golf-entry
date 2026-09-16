@@ -1,0 +1,17 @@
+# 多胡杯ゴルフコンペ 名簿中継 Worker（未デプロイ）
+#
+# ダッシュボードに worker.js を貼るだけでも動きます。
+# wrangler を使う場合だけ、このファイルを使ってください。
+#
+# KV は使いません（名簿を保存しないため）。secrets もありません。
+# GAS_URL は秘密ではないので、vars に置いて構いません（index.html にも書かれています）。
+
+name = "golf-list"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# workers.dev のサブドメインで公開する（独自ドメインは不要）
+workers_dev = true
+
+[vars]
+GAS_URL = "https://script.google.com/macros/s/AKfycbzVfEJMWakJbssH2pRQQ8NesAy0UX9lGO4IB3Jh59VWoDsr62HHdWIkc4A8jbt1rZZe3Q/exec"
