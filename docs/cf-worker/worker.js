@@ -17,7 +17,7 @@
  * ダッシュボードにこのまま貼れば動く。依存なし・単一ファイル。
  */
 
-const GAS_TIMEOUT_MS = 8000;   // GAS 1本あたりの待ち
+const GAS_TIMEOUT_MS = 14000;  // GAS 1本あたりの待ち（8秒だと待てば返る分を捨てていた）
 const GAS_MAX_CALLS  = 3;      // 1リクエストで GAS を叩く上限
 
 /* 名簿を返すので、許すオリジンは決め打ちにする */
@@ -52,7 +52,8 @@ export default {
       + (idToken ? '&id_token=' + encodeURIComponent(idToken) : '');
 
     /* 1本目を出し、駄目なら2本目と3本目を同時に出して早い方を採る。
-       待ちは1本 8 秒なので、最悪でも 16 秒で結論が出る（上限3本）。 */
+       待ちは1本 14 秒なので、最悪でも 28 秒で結論が出る（上限3本）。
+       8 秒だった頃は、9〜16 秒で返ってくる回を打ち切って捨てていた。 */
     const stamp = () => '&t=' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
     let got = await callGas(base + stamp());
