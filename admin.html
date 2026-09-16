@@ -135,8 +135,8 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16c';
-const DIAG = { tok:'none', res:'', times:[] };
+const BUILD = '2026-09-16d';
+const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
@@ -273,9 +273,12 @@ function showDenied(){
 /* GAS は普段1〜2秒で返るが、Google 側の実行開始が遅れて25秒以上かかることがある。
    そのときはログインし直しても直らないので、黙って引き直す。
    1回あたり40秒待ち、最大3回。エラー文は3回とも駄目だったときだけ出す。 */
-/* 1回目・2回目は短めに切って引き直す。遅い実行を待ち続けるより、
-   引き直した方が速く返ることが多い。3回目だけ長めに待つ。最悪80秒 */
+/* 1回目・2回目は短めに切って引き直す。3回目だけ長めに待つ。最悪80秒。
+   取りに行く手段は fetch を先に使う。LINE 内ブラウザでは <script> の JSONP が
+   読み込み完了も失敗も通知してこないことがあり、そうなると何も起きないため。
+   3回目だけ従来の JSONP を保険として残す。 */
 const LIST_WAITS     = [20000, 20000, 40000];
+const LIST_VIA       = ['fetch', 'fetch', 'jsonp'];
 const LIST_MAX_TRIES = LIST_WAITS.length;
 
 /* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
@@ -313,6 +316,7 @@ function diagHtml(){
     + 'v=' + BUILD + ' login=' + login + ' tok=' + DIAG.tok
     + ' res=' + (DIAG.res || '-')
     + ' try=' + DIAG.times.length
+    + ' via=' + (DIAG.via.join(',') || '-')
     + ' t=' + (DIAG.times.length ? DIAG.times.join('s,') + 's' : '-') + '</div>';
 }
 function showDiag(){
@@ -343,7 +347,11 @@ function showOpenInLine(){
 
 function loadList(attempt){
   attempt = attempt || 1;
-  lap('一覧の取得（' + attempt + '回目）');
+  const via  = LIST_VIA[attempt - 1] || 'jsonp';
+  const wait = LIST_WAITS[attempt - 1] || 20000;
+  lap('一覧の取得（' + attempt + '回目・' + via + '）');
+  DIAG.via.push(via);
+
   const t0 = Date.now();
   let settled = false;
   let timer = null;
@@ -352,8 +360,7 @@ function loadList(attempt){
   app.innerHTML = '<div class="note">読み込み中…'
     + (attempt > 1 ? '（' + attempt + '回目）' : '') + '</div>';
 
-  /* 遅い・届かないときは、ログインには飛ばさず黙って引き直す。
-     Google 側の実行開始が遅れるだけのことが多く、待てば返ってくる。 */
+  /* 届かない・読めないときはログインに飛ばさず、黙って引き直す */
   const retryOrGiveUp = function(why){
     if(settled) return;
     settled = true; clearTimeout(timer);
@@ -368,7 +375,7 @@ function loadList(attempt){
       + diagHtml() + '</div>';
   };
 
-  window.__list = function(res){
+  const handle = function(res){
     if(settled) return;
     settled = true; clearTimeout(timer);
     DIAG.times.push(secs());
@@ -387,19 +394,38 @@ function loadList(attempt){
 
   const cred = credentialParam();
   if(!cred){
-    settled = true; clearTimeout(timer);
+    settled = true;
     recoverOnce('no-credential');
     return;
   }
 
-  timer = setTimeout(function(){ retryOrGiveUp('timeout'); }, LIST_WAITS[attempt - 1] || 20000);
+  if(via === 'fetch'){
+    /* callback を付けなければ GAS は JSON を返す。応答を読むので CORS が要るが、
+       /exec も転送先も access-control-allow-origin: * を返すことを確認済み */
+    const url = GAS_URL + '?action=list' + cred + '&t=' + Date.now();
+    let ctrl = null;
+    try { ctrl = new AbortController(); } catch(e){}
+    timer = setTimeout(function(){
+      if(ctrl){ try { ctrl.abort(); } catch(e){} }
+      retryOrGiveUp('timeout');
+    }, wait);
+    fetch(url, { method:'GET', redirect:'follow', signal: ctrl ? ctrl.signal : undefined })
+      .then(function(r){ return r.json(); })
+      .then(handle)
+      .catch(function(err){
+        if(settled) return;
+        retryOrGiveUp((err && err.name === 'AbortError') ? 'timeout' : 'fetchfail');
+      });
+    return;
+  }
 
+  /* 保険の JSONP */
+  window.__list = handle;
+  timer = setTimeout(function(){ retryOrGiveUp('timeout'); }, wait);
   const s = document.createElement('script');
   s.src = GAS_URL + '?action=list' + cred
-        + '&callback=__list&t=' + Date.now();   // 途中のキャッシュに当たらないようにする
+        + '&callback=__list&t=' + Date.now();
   s.onerror = function(){ retryOrGiveUp('neterr'); };
-  /* 読み込みは終わったのに __list が呼ばれない＝返ってきたものが JavaScript で
-     なかった。一過性のことがあるので、これも引き直しで拾う */
   s.onload = function(){ setTimeout(function(){ retryOrGiveUp('notjs'); }, 0); };
   document.body.appendChild(s);
 }
