@@ -282,7 +282,7 @@ const LIST_VIA       = ['worker', 'worker', 'jsonp'];
 /* 名簿の中継役。Google の配信経路を通らずに済ませるために挟む。
    空のままなら worker の回は自動で GAS 直行（fetch）に落ちるので、
    Worker を止めても画面は死なない。 */
-const WORKER_URL     = '';
+const WORKER_URL     = 'https://golf-list.yuta-ce7.workers.dev';
 const LIST_MAX_TRIES = LIST_WAITS.length;
 /* fetch の回は同時に2本投げて、先に正しく返った方を採る。
    Google の窓口は同じ要求でも返る回と取りこぼす回があるため、
