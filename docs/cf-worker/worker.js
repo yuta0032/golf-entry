@@ -17,7 +17,8 @@
  * ダッシュボードにこのまま貼れば動く。依存なし・単一ファイル。
  */
 
-const GAS_TIMEOUT_MS = 14000;  // GAS 1本あたりの待ち（8秒だと待てば返る分を捨てていた）
+const GAS_TIMEOUT_MS = 14000;  // GAS 1本あたりの上限（8秒だと待てば返る分を捨てていた）
+const GAS_HEDGE_MS   = 2500;   // 1本目がこれだけ待っても返らなければ、予備を出す
 const GAS_MAX_CALLS  = 3;      // 1リクエストで GAS を叩く上限
 
 /* 名簿を返すので、許すオリジンは決め打ちにする */
@@ -51,14 +52,19 @@ export default {
       + (token ? '&token=' + encodeURIComponent(token) : '')
       + (idToken ? '&id_token=' + encodeURIComponent(idToken) : '');
 
-    /* 1本目を出し、駄目なら2本目と3本目を同時に出して早い方を採る。
-       待ちは1本 14 秒なので、最悪でも 28 秒で結論が出る（上限3本）。
-       8 秒だった頃は、9〜16 秒で返ってくる回を打ち切って捨てていた。 */
+    /* 1本目を出す。**打ち切りを待たずに** 2.5 秒で予備を2本足し、
+       先に返った中身を採る（1本目も生かしたまま）。
+       ・1本目の打ち切り（14秒）を待ってから予備を出すと、遅い回に当たるたび
+         14 秒を丸ごと損する。実測でも中央値が 2.14s → 4.75s に悪化した。
+       ・予備を早く出せば、速い回はそのまま速く、遅い回は予備が拾う。 */
     const stamp = () => '&t=' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
-    let got = await callGas(base + stamp());
-    if (!got) {
-      got = await firstGood([ callGas(base + stamp()), callGas(base + stamp()) ]);
+    const first = callGas(base + stamp());
+    const hedge = new Promise((r) => setTimeout(() => r('HEDGE'), GAS_HEDGE_MS));
+
+    let got = await Promise.race([first, hedge]);
+    if (got === 'HEDGE' || !got) {
+      got = await firstGood([ first, callGas(base + stamp()), callGas(base + stamp()) ]);
     }
     if (!got) return cors(json({ error: 'upstream' }, 502), origin);
 
