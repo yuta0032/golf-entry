@@ -135,8 +135,8 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16a';
-const DIAG = { tok:'none', res:'', t:0 };
+const BUILD = '2026-09-16b';
+const DIAG = { tok:'none', res:'', times:[] };
 let allRows = [];
 let curEvent = '';
 let curFilter = 'all';
@@ -270,16 +270,11 @@ function showDenied(){
   app.innerHTML = '<div class="note">このアカウントでは管理画面を閲覧できません。<br><small style="word-break:break-all">'+escapeHtml(profile.userId)+'</small></div>';
 }
 
-/* GAS の応答は普段1〜2秒だが、混み合うと30秒以上かかることがある。
-   今までは待ち続けるだけで画面が「読み込み中…」のまま固まって見えた。
-
-   ・8秒を過ぎたら「混んでいます」と経過秒数を出す（何も起きていないように見えない）
-   ・それでも待ち続ける。40秒で返ってきた応答もちゃんと表示する
-   ・自動での引き直しはしない。混んでいるところに要求を重ねると余計に詰まるため。
-     代わりに「読み込み直す」ボタンを出して、押すかどうかは人が決める
-   ・60秒であきらめて、状況を説明して終わる */
-const LIST_SLOW_MS   = 8000;
-const LIST_GIVEUP_MS = 20000;
+/* GAS は普段1〜2秒で返るが、Google 側の実行開始が遅れて25秒以上かかることがある。
+   そのときはログインし直しても直らないので、黙って引き直す。
+   1回あたり40秒待ち、最大3回。エラー文は3回とも駄目だったときだけ出す。 */
+const LIST_TRY_MS    = 40000;
+const LIST_MAX_TRIES = 3;
 
 /* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
 function credentialParam(){
@@ -293,7 +288,8 @@ function credentialParam(){
   return '';
 }
 
-/* 何で失敗しても、まず一度だけログインをやり直す。
+/* ログインし直せば直る類（forbidden / no token / 資格情報なし）だけに使う。
+   応答が遅い・届かないのはログインでは直らないので、ここへは回さない。
    外部ブラウザではトークンが一日で切れるが isLoggedIn() は true のままなので、
    「取れている＝使える」とは限らない。取り直せば大抵これで通る。
    2回やっても駄目なら、LINEアプリで開いてもらう。 */
@@ -313,7 +309,9 @@ function diagHtml(){
   try { login = String(!!liff.isLoggedIn()); } catch(e){}
   return '<div style="margin-top:14px;font-size:11px;color:#9aa39b;line-height:1.5">'
     + 'v=' + BUILD + ' login=' + login + ' tok=' + DIAG.tok
-    + ' res=' + (DIAG.res || '-') + ' t=' + DIAG.t + 's</div>';
+    + ' res=' + (DIAG.res || '-')
+    + ' try=' + DIAG.times.length
+    + ' t=' + (DIAG.times.length ? DIAG.times.join('s,') + 's' : '-') + '</div>';
 }
 function showDiag(){
   const el = document.createElement('div');
@@ -341,26 +339,40 @@ function showOpenInLine(){
     + diagHtml() + '</div>';
 }
 
-function loadList(){
-  lap('一覧の取得を開始');
+function loadList(attempt){
+  attempt = attempt || 1;
+  lap('一覧の取得（' + attempt + '回目）');
   const t0 = Date.now();
   let settled = false;
-  let slowTimer = null, giveUpTimer = null, tick = null;
-  const clearAll = function(){ clearTimeout(slowTimer); clearTimeout(giveUpTimer); clearInterval(tick); };
+  let timer = null;
+  const secs = function(){ return ((Date.now() - t0) / 1000).toFixed(1); };
 
-  const waiting = function(msg){
-    app.innerHTML = '<div class="note">' + msg
-      + '<br><small id="waitsec"></small>'
-      + '<br><br><button class="pbtn" onclick="location.reload()">読み込み直す</button></div>';
+  app.innerHTML = '<div class="note">読み込み中…'
+    + (attempt > 1 ? '（' + attempt + '回目）' : '') + '</div>';
+
+  /* 遅い・届かないときは、ログインには飛ばさず黙って引き直す。
+     Google 側の実行開始が遅れるだけのことが多く、待てば返ってくる。 */
+  const retryOrGiveUp = function(why){
+    if(settled) return;
+    settled = true; clearTimeout(timer);
+    DIAG.times.push(secs());
+    DIAG.res = why;
+    window.__list = function(){};                 // 遅れて返った分は捨てる
+    if(attempt < LIST_MAX_TRIES){ loadList(attempt + 1); return; }
+    app.innerHTML =
+      '<div class="note">サーバーが混み合っていて名簿を読み込めませんでした。<br>'
+      + '少し待ってから、もう一度お試しください。'
+      + '<br><br><button class="pbtn" onclick="location.reload()">読み込み直す</button>'
+      + diagHtml() + '</div>';
   };
 
   window.__list = function(res){
     if(settled) return;
-    settled = true; clearAll();
-    DIAG.t = Math.round((Date.now() - t0) / 1000);
+    settled = true; clearTimeout(timer);
+    DIAG.times.push(secs());
     lap('一覧を受信');
     if(!res || res.error){
-      /* forbidden も no token も、まずは取り直せば通ることが多い */
+      /* これはログインし直せば直る類 */
       recoverOnce(res && res.error ? String(res.error) : 'error');
       return;
     }
@@ -371,48 +383,22 @@ function loadList(){
     lap('描画完了');
   };
 
-  slowTimer = setTimeout(function(){
-    if(settled) return;
-    waiting('サーバーが混み合っているようです。まだ待っています。');
-    tick = setInterval(function(){
-      const el = document.getElementById('waitsec');
-      if(el) el.textContent = Math.round((Date.now() - t0) / 1000) + '秒経過';
-    }, 1000);
-  }, LIST_SLOW_MS);
-
-  giveUpTimer = setTimeout(function(){
-    if(settled) return;
-    settled = true; clearAll();
-    DIAG.t = Math.round((Date.now() - t0) / 1000);
-    recoverOnce('timeout');
-  }, LIST_GIVEUP_MS);
-
   const cred = credentialParam();
   if(!cred){
-    settled = true; clearAll();
+    settled = true; clearTimeout(timer);
     recoverOnce('no-credential');
     return;
   }
+
+  timer = setTimeout(function(){ retryOrGiveUp('timeout'); }, LIST_TRY_MS);
+
   const s = document.createElement('script');
   s.src = GAS_URL + '?action=list' + cred
         + '&callback=__list&t=' + Date.now();   // 途中のキャッシュに当たらないようにする
-  s.onerror = function(){
-    if(settled) return;
-    settled = true; clearAll();
-    DIAG.t = Math.round((Date.now() - t0) / 1000);
-    recoverOnce('neterr');
-  };
-  /* 読み込みは終わったのに __list が呼ばれない＝返ってきたものが
-     JavaScript ではなかった、ということ。黙って待ち続けても無駄なので
-     すぐ知らせる。ブラウザによっては onerror が出ないので、この受けが要る。 */
-  s.onload = function(){
-    setTimeout(function(){
-      if(settled) return;
-      settled = true; clearAll();
-      DIAG.t = Math.round((Date.now() - t0) / 1000);
-      recoverOnce('notjs');        // 読めたのに呼ばれない＝応答が JavaScript でない
-    }, 0);
-  };
+  s.onerror = function(){ retryOrGiveUp('neterr'); };
+  /* 読み込みは終わったのに __list が呼ばれない＝返ってきたものが JavaScript で
+     なかった。一過性のことがあるので、これも引き直しで拾う */
+  s.onload = function(){ setTimeout(function(){ retryOrGiveUp('notjs'); }, 0); };
   document.body.appendChild(s);
 }
 
