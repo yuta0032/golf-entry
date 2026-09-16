@@ -135,7 +135,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16b';
+const BUILD = '2026-09-16c';
 const DIAG = { tok:'none', res:'', times:[] };
 let allRows = [];
 let curEvent = '';
@@ -273,8 +273,10 @@ function showDenied(){
 /* GAS は普段1〜2秒で返るが、Google 側の実行開始が遅れて25秒以上かかることがある。
    そのときはログインし直しても直らないので、黙って引き直す。
    1回あたり40秒待ち、最大3回。エラー文は3回とも駄目だったときだけ出す。 */
-const LIST_TRY_MS    = 40000;
-const LIST_MAX_TRIES = 3;
+/* 1回目・2回目は短めに切って引き直す。遅い実行を待ち続けるより、
+   引き直した方が速く返ることが多い。3回目だけ長めに待つ。最悪80秒 */
+const LIST_WAITS     = [20000, 20000, 40000];
+const LIST_MAX_TRIES = LIST_WAITS.length;
 
 /* 送るときに取り直す。ID トークンは期限が短いので、作ってすぐ投げる */
 function credentialParam(){
@@ -390,7 +392,7 @@ function loadList(attempt){
     return;
   }
 
-  timer = setTimeout(function(){ retryOrGiveUp('timeout'); }, LIST_TRY_MS);
+  timer = setTimeout(function(){ retryOrGiveUp('timeout'); }, LIST_WAITS[attempt - 1] || 20000);
 
   const s = document.createElement('script');
   s.src = GAS_URL + '?action=list' + cred
