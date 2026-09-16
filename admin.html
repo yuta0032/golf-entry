@@ -223,8 +223,11 @@ async function main(){
   if(!liff.isLoggedIn()){
     if(!startLogin()){
       /* すでにログインの途中。二重に始めると引換券が食い違う */
-      app.innerHTML = '<div class="note">ログインの途中です。しばらくお待ちください…'
-        + '<br><br><button class="pbtn" onclick="reLogin()">やり直す</button>' + diagHtml() + '</div>';
+      app.innerHTML = '<div class="note">ログインの途中です。'
+        + '<br>60秒ほど待つと、やり直せます。'
+        + '<br><br>' + openInLineHtml()
+        + '<br><br><button class="pbtn" onclick="reLogin()">やり直す</button>'
+        + diagHtml() + '</div>';
     }
     return;
   }
@@ -352,12 +355,10 @@ function markRelogin(){ try { sessionStorage.setItem(RELOGIN_KEY, '1'); } catch(
 function clearRelogin(){ try { sessionStorage.removeItem(RELOGIN_KEY); } catch(e){} }
 
 function showOpenInLine(){
-  const url = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
   app.innerHTML =
     '<div class="note">このブラウザではLINEのログイン情報を取得できませんでした。<br>'
     + '<b>LINEアプリから開いてください。</b>'
-    + '<div class="uid" style="text-align:left">' + escapeHtml(url) + '</div>'
-    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="' + escapeHtml(url) + '">LINEで開く</a>'
+    + openInLineHtml()
     + '<br><br><button class="pbtn" onclick="reLogin()">もう一度ログインする</button>'
     + '<p class="hint" style="margin-top:12px">別のLINEアカウントでログインしている場合も、これが出ます。</p>'
     + diagHtml() + '</div>';
@@ -499,6 +500,13 @@ function scrubUrl(){
    「code_verifier does not match」になる。60秒は次を始めない。
    タブをまたぐので localStorage に置く（sessionStorage だと別タブで消える）。 */
 const LOGIN_FLIGHT_KEY = 'tagocup.admin.loginAt';
+/* LINE アプリで開くための入口。うまくいかないときの逃げ道として各所に出す */
+const LIFF_OPEN_URL = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
+function openInLineHtml(){
+  return '<div class="uid" style="text-align:left">' + escapeHtml(LIFF_OPEN_URL) + '</div>'
+    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="'
+    + escapeHtml(LIFF_OPEN_URL) + '">LINEで開く</a>';
+}
 function loginInFlight(){
   try {
     const t = Number(localStorage.getItem(LOGIN_FLIGHT_KEY) || 0);
@@ -817,12 +825,10 @@ main().catch(function(err){
     } catch(e){}
   }
   clearLoginFlight();
-  const liffUrl = 'https://liff.line.me/' + LIFF_ID + '/admin.html';
   app.innerHTML =
     '<div class="note">読み込みに失敗しました。<br><small>' + escapeHtml(msg) + '</small>'
     + '<br><br><b>LINEアプリから開くと確実です。</b>'
-    + '<div class="uid" style="text-align:left">' + escapeHtml(liffUrl) + '</div>'
-    + '<a class="pbtn" style="display:inline-block;text-decoration:none" href="' + escapeHtml(liffUrl) + '">LINEで開く</a>'
+    + openInLineHtml()
     + '<br><br><button class="pbtn" onclick="reLogin()">ログインし直す</button>'
     + diagHtml() + '</div>';
 });
