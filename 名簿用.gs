@@ -192,6 +192,10 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
 
+    /* 代理登録の口。LIFF からの申込とは別の経路なので、ここで分けて返す。
+       これ以降の既存の処理には一切手を入れていない */
+    if (d.action === 'adminUpsert') return adminUpsert_(d);
+
     /* ── 1. 誰からの送信かを確かめる ───────────────── */
     const who = resolveSender_(d);
     if (!who || !who.userId) {
@@ -422,4 +426,72 @@ function buildConfirmText(d) {
   if (d.note) t += '備考：' + d.note + '\n';
   t += '\n内容を変更する場合は、もう一度フォームから送信してください。';
   return t;
+}
+
+
+/* ============================================================
+   代理登録の口（v56 で追加）
+
+   口頭で申込を受けた分を、担当の Mac から直接この台帳に入れるための口。
+   ★既存の経路（LIFF からの申込・admin.html の一覧・prefill・list）には
+     一切手を入れていない。doPost の先頭に分岐を1行足しただけ。
+
+   認証は Script Properties の ADMIN_KEY。
+   ・鍵はコードに書かない。ブラウザにも配らない（LIFF 経由では使わない）
+   ・書くだけ。台帳の中身は返さない（返すのは行番号と、送った姓名・回だけ）
+   ・鍵が合わなければ何も書かない。ログにも鍵は残さない
+   ・dryRun を付けると、鍵の確認だけして何も書かない
+
+   本人が申し込んだわけではないので、LINE 通知・受付完了メール・幹事あて
+   メールは送らない。
+   ============================================================ */
+function adminUpsert_(d) {
+  const key = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
+  if (!key) {
+    return json_({ result: 'error', message: 'ADMIN_KEY is not set' });
+  }
+  if (String(d.adminKey || '') !== key) {
+    Logger.log('adminUpsert: forbidden');          // 鍵そのものは記録しない
+    return json_({ result: 'forbidden' });
+  }
+
+  const r = d.row || {};
+  const name    = String(r.name || '').trim();
+  const eventNo = String(r.eventNo || '').trim();
+  if (!name || !eventNo) {
+    return json_({ result: 'error', message: 'name and eventNo are required' });
+  }
+
+  if (d.dryRun) {
+    return json_({ result: 'ok', dryRun: true, name: name, eventNo: eventNo });
+  }
+
+  /* 書き込みは既存の saveRow_ をそのまま使う。
+     「同じ回・同じ姓名」なら上書き、無ければ最終行の下に足す。
+     LINE 経由の登録と同じ動きになる */
+  saveRow_(r);
+
+  return json_({
+    result: 'ok',
+    row: findRow_(name, eventNo),                  // 何行目に入ったか
+    name: name,
+    eventNo: eventNo
+  });
+}
+
+/** 同じ回・同じ姓名の行が今どこにあるかを返す。無ければ 0。
+ *  書き込んだ結果を確かめるためだけに使う（台帳の中身は返さない） */
+function findRow_(name, eventNo) {
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+  if (!sheet) return 0;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const rows = sheet.getRange(2, 1, lastRow - 1, EVENT_COL).getValues();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (String(rows[i][NAME_COL - 1]).trim() === String(name).trim()
+        && String(rows[i][EVENT_COL - 1]).trim() === String(eventNo).trim()) {
+      return i + 2;
+    }
+  }
+  return 0;
 }
