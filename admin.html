@@ -52,6 +52,17 @@
   .setup ol{margin:14px 0 0; padding-left:20px; font-size:13px; color:var(--muted)}
   .setup code{background:var(--bg); padding:1px 5px; border-radius:4px}
 
+  /* ===== 未申込の札（最上部） ===== */
+  .pendbar{display:flex; align-items:center; gap:7px; margin-bottom:12px; padding:11px 13px;
+        font-size:14px; font-weight:600; color:#633806; background:#faeeda;
+        border:1px solid #e8d4b0; border-radius:10px; cursor:pointer}
+  .pendbar .n{font-size:18px; font-weight:700}
+  .pendbar .ar{margin-left:auto; font-size:12px; font-weight:600; color:#8a6a35}
+  /* 0人のときは押せないので、押せそうな見た目をやめる */
+  .pendbar.zero{color:var(--muted); background:#fff; border-color:var(--line); cursor:default}
+  .pendbox{margin-bottom:14px}
+  .pendbox .hint{font-size:12px; color:var(--muted); margin:0 0 8px}
+
   /* ===== 印刷用一覧 ===== */
   .pbtn{padding:10px 14px; font-size:14px; font-weight:600; color:var(--green-d); background:#fff;
         border:1px solid var(--line); border-radius:10px; cursor:pointer}
@@ -135,7 +146,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-09-16h';
+const BUILD = '2026-10-07a';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -553,6 +564,8 @@ function renderDash(res){
   app.innerHTML =
     '<h1>多胡杯ゴルフコンペ 管理</h1>'
     + '<p class="sub" id="sub"></p>'
+    + '<div id="pendBar"></div>'
+    + '<div id="pendBox" hidden></div>'
     + '<div class="row"><select id="evsel" onchange="onEvent()"></select></div>'
     + '<div class="metrics">'
       + '<div class="metric"><div class="l">参加</div><div class="v" id="cJoin">0</div></div>'
@@ -600,6 +613,92 @@ function onFilter(el){
   el.classList.add('on'); curFilter = el.dataset.f; draw();
 }
 function onSearch(v){ curQuery = (v||'').trim(); draw(); }
+
+/* ============================================================
+   未申込の札（最上部）
+
+   過去の回に参加していて、今の回にまだ返事が無い人を出す。
+   並びは「前回参加者 → その前の回」の順。回の中はフリガナ順。
+   突き合わせは姓名で行う（台帳の重複判定も姓名なので精度は同じ）。
+   GAS は触っていない。list で既に取ってある行だけで組んでいる
+   ============================================================ */
+let pendOpen = false;
+
+function pendingAll(){
+  const cur = Number(curEvent);
+  if(!isFinite(cur)) return [];
+
+  /* 今の回に返事を出している人は外す。
+     「参加する」「参加しない」のほか、古い台帳の「参加できません」なども
+     拾えるよう、値の中身は見ずに「埋まっているか」だけ見る */
+  const done = {};
+  allRows.forEach(function(r){
+    if(String(r.eventNo) !== String(curEvent)) return;
+    if(!String(r.join||'').trim()) return;
+    done[String(r.name||'').trim()] = true;
+  });
+
+  /* 同じ人が何回も出てくるので、参加した一番新しい回だけ残す。
+     回999 は動作確認用なので数えない */
+  const best = {};
+  allRows.forEach(function(r){
+    const n = Number(r.eventNo);
+    if(!isFinite(n) || n === 999 || n >= cur) return;
+    if(r.join !== '参加する') return;
+    const nm = String(r.name||'').trim();
+    if(!nm || done[nm]) return;
+    if(!best[nm] || n > best[nm].no) best[nm] = { no:n, name:nm, row:r };
+  });
+
+  return Object.keys(best).map(function(k){ return best[k]; }).sort(function(a, b){
+    if(b.no !== a.no) return b.no - a.no;                       // 新しい回に参加した人を先に
+    return String(a.row.kana||'').localeCompare(String(b.row.kana||''), 'ja');
+  });
+}
+
+/* 連絡先は中身を出さず「あり／なし」だけ。この札は連絡を取る人を選ぶためのもの */
+function hasContact(r){
+  return !!(String(r.phone||'').trim() || String(r.email||'').trim());
+}
+
+function drawPend(){
+  const bar = document.getElementById('pendBar');
+  const box = document.getElementById('pendBox');
+  if(!bar || !box) return;
+
+  const list = pendingAll();
+  bar.className = 'pendbar' + (list.length ? '' : ' zero');
+  bar.innerHTML = '未申込 <span class="n">' + list.length + '</span> 人'
+    + (list.length ? '<span class="ar">' + (pendOpen ? '閉じる ▲' : '見る ▼') + '</span>' : '');
+  bar.onclick = list.length ? togglePend : null;
+
+  if(!list.length){
+    pendOpen = false;
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+
+  box.hidden = !pendOpen;
+  if(!pendOpen) return;
+
+  box.innerHTML = '<div class="card pendbox">'
+    + '<p class="hint">第' + curEvent + '回の返事がまだの、過去に参加された方です。'
+    + '新しい回に参加された方から並んでいます。姓名で突き合わせているので、'
+    + '同姓同名の方は漏れることがあります</p>'
+    + '<table class="plist"><thead><tr>'
+      + '<th class="num">#</th><th>氏名</th><th>前回の参加</th><th>連絡先</th>'
+    + '</tr></thead><tbody>'
+    + list.map(function(p, i){
+        return '<tr><td class="num">' + (i + 1) + '</td>'
+          + '<td class="nw">' + escapeHtml(p.name) + '</td>'
+          + '<td class="nw">第' + p.no + '回</td>'
+          + '<td class="nw">' + (hasContact(p.row) ? 'あり' : 'なし') + '</td></tr>';
+      }).join('')
+    + '</tbody></table></div>';
+}
+
+function togglePend(){ pendOpen = !pendOpen; drawPend(); }
 
 /* ============================================================
    印刷用一覧
@@ -789,6 +888,7 @@ function draw(){
   setText('cJoin', nJoin+'名');
   setText('cNo', nNo+'名');
   setText('sub', '第'+curEvent+'回 ・ 合計 '+rows.length+'名');
+  drawPend();                       // 読み込み時と回の切替時に数え直す
 
   if(curFilter!=='all') rows = rows.filter(function(r){ return r.join===curFilter; });
   if(curQuery) rows = rows.filter(function(r){ return ((r.name||'')+' '+(r.kana||'')).indexOf(curQuery)>-1; });
