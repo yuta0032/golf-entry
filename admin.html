@@ -146,7 +146,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-10-07a';
+const BUILD = '2026-10-07b';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -220,10 +220,12 @@ const PCOLS = [
   { k:'receipt',     t:'領収書',     d:true,  nw:true  },
   { k:'note',        t:'備考',       d:true,  nw:false },
   { k:'displayName', t:'LINE表示名', d:false, nw:false },
-  { k:'timestamp',   t:'登録日時',   d:false, nw:true  }
+  { k:'timestamp',   t:'登録日時',   d:false, nw:true  },
+  /* only: その一覧のときだけ出す項目。最後の参加回は未申込一覧にしか値が無い */
+  { k:'__lastNo',    t:'最後の参加回', d:true, nw:true, only:'pending' }
 ];
 const PCOLS_KEY = 'tagocup.printCols';
-let pList = 'join';        // 'join'=参加者 / 'no'=不参加者
+let pList = 'join';        // 'join'=参加者 / 'no'=不参加者 / 'pending'=過去参加・今回未申込
 let pOn = {};              // 選ばれている項目
 
 async function main(){
@@ -583,7 +585,7 @@ function renderDash(res){
         + '<div class="pgrp"><span class="plabel">どちらを印刷しますか</span>'
           + '<label><input type="radio" name="plist" value="join" checked onchange="onPList(this)"> 参加者一覧</label>'
           + '<label><input type="radio" name="plist" value="no" onchange="onPList(this)"> 不参加者一覧</label>'
-          + '<label><input type="radio" name="plist" value="pending" onchange="onPList(this)"> 前回参加・今回未申込</label>'
+          + '<label><input type="radio" name="plist" value="pending" onchange="onPList(this)"> 過去参加・今回未申込</label>'
         + '</div>'
         + '<div class="pgrp"><span class="plabel">入れる項目（チェックしたものが印刷されます）</span>'
           + '<div class="pcols" id="pcols"></div>'
@@ -687,7 +689,7 @@ function drawPend(){
     + '新しい回に参加された方から並んでいます。姓名で突き合わせているので、'
     + '同姓同名の方は漏れることがあります</p>'
     + '<table class="plist"><thead><tr>'
-      + '<th class="num">#</th><th>氏名</th><th>前回の参加</th><th>連絡先</th>'
+      + '<th class="num">#</th><th>氏名</th><th>最後の参加回</th><th>連絡先</th>'
     + '</tr></thead><tbody>'
     + list.map(function(p, i){
         return '<tr><td class="num">' + (i + 1) + '</td>'
@@ -718,13 +720,14 @@ function saveCols(){
 /* その項目を1件でも持っている人がいるか（GASが返していない項目を見分けるため） */
 function colHasData(k){
   if(k === '__age') return allRows.some(function(r){ return calcAge(r.birth) !== null; });
+  if(k === '__lastNo') return true;             // 未申込一覧でしか出さず、そこでは必ず値がある
   return allRows.some(function(r){ return r[k] !== undefined && r[k] !== null && String(r[k]) !== ''; });
 }
 
 function renderCols(){
   const box = document.getElementById('pcols');
   if(!box) return;
-  box.innerHTML = PCOLS.map(function(c){
+  box.innerHTML = activeCols().map(function(c){
     const none = colHasData(c.k) ? '' : ' <span class="empty">（データなし）</span>';
     return '<label><input type="checkbox" data-k="' + c.k + '"' + (pOn[c.k] ? ' checked' : '')
          + ' onchange="onCol(this)"> ' + escapeHtml(c.t) + none + '</label>';
@@ -735,7 +738,7 @@ function setAllCols(v){
   PCOLS.forEach(function(c){ pOn[c.k] = v; });
   saveCols(); renderCols(); drawPrint();
 }
-function onPList(el){ pList = el.value; drawPrint(); }
+function onPList(el){ pList = el.value; renderCols(); drawPrint(); }
 
 function togglePrint(){
   const panel = document.getElementById('printPanel');
@@ -767,23 +770,15 @@ function printRows(){
   };
 
   if(pList === 'pending'){
-    /* 前の回に参加した人のうち、今の回にまだ申込が無い人。
-       姓名で突き合わせる（台帳の重複判定も姓名なので精度は同じ） */
-    const prev = prevEvent();
-    if(prev === null) return [];
-    const done = {};
-    allRows.forEach(function(r){
-      if(String(r.eventNo) === String(curEvent)) done[String(r.name||'').trim()] = true;
+    /* 最上部の札とまったく同じ計算を使う。数が2つにならないよう、
+       数え方は pendingAll() の1か所だけに置いている。
+       並びも pendingAll() が決めた順（新しい回の人から、回の中はフリガナ順）をそのまま使う */
+    return pendingAll().map(function(p){
+      const r = {};
+      for(const k in p.row) r[k] = p.row[k];
+      r.__lastNo = p.no;                      // 「最後の参加回」の列で使う
+      return r;
     });
-    const seen = {};
-    return allRows.filter(function(r){
-      if(String(r.eventNo) !== String(prev)) return false;
-      if(r.join !== '参加する') return false;
-      const nm = String(r.name||'').trim();
-      if(!nm || done[nm] || seen[nm]) return false;
-      seen[nm] = true;
-      return true;
-    }).sort(sortByKana);
   }
 
   return allRows.filter(function(r){
@@ -793,7 +788,11 @@ function printRows(){
   }).sort(sortByKana);
 }
 
-function selectedCols(){ return PCOLS.filter(function(c){ return pOn[c.k]; }); }
+/* 今の一覧で出せる項目。only が付いた項目はその一覧のときだけ出す */
+function activeCols(){
+  return PCOLS.filter(function(c){ return !c.only || c.only === pList; });
+}
+function selectedCols(){ return activeCols().filter(function(c){ return pOn[c.k]; }); }
 
 /* 列数に応じて 縦/横 と文字の大きさを決める（最小75%、それ以下は折り返しで対応） */
 function pageSetup(n){
@@ -804,7 +803,7 @@ function pageSetup(n){
   return { orient: portrait ? 'portrait' : 'landscape', scale: scale };
 }
 
-/* 一番古い回には「前の回」が無いので、その選択肢は選べないようにする。
+/* 一番古い回には「過去の回」が無いので、その選択肢は選べないようにする。
    選んだ状態で古い回に切り替えた場合は、参加者一覧に戻す */
 function syncPendingOption(){
   const el = document.querySelector('input[name="plist"][value="pending"]');
@@ -832,10 +831,9 @@ function drawPrint(){
   st.textContent = '@page{size:A4 ' + setup.orient + '; margin:12mm}';
   area.style.setProperty('--pscale', setup.scale);
 
-  const prev = pList === 'pending' ? prevEvent() : null;
   const kind = pList === 'join' ? '参加者一覧'
              : (pList === 'no' ? '不参加者一覧'
-             : '第' + (prev === null ? '―' : prev) + '回に参加・今回未申込の方');
+             : '過去参加・今回未申込の方');
   const title = '第' + curEvent + '回多胡杯ゴルフコンペ　' + kind
               + '（' + rows.length + '名）';
   const d = new Date();
@@ -847,8 +845,8 @@ function drawPrint(){
   if(!cols.length){
     body = '<p class="pmeta">項目が1つも選ばれていません。</p>';
   } else if(!rows.length){
-    body = '<p class="pmeta">' + (pList === 'pending' && prev === null
-      ? '前の回のデータが台帳にありません。'
+    body = '<p class="pmeta">' + (pList === 'pending' && prevEvent() === null
+      ? '過去の回のデータが台帳にありません。'
       : '該当する方はいません。') + '</p>';
   } else {
     const head = '<tr><th class="num">No.</th>'
@@ -871,6 +869,7 @@ function drawPrint(){
 
 function cellText(r, k){
   if(k === '__age') return ageText(r);          // 年齢は生年月日から計算する項目
+  if(k === '__lastNo') return r.__lastNo ? '第' + r.__lastNo + '回' : '';
   const v = r[k];
   if(v === undefined || v === null) return '';
   return String(v);
