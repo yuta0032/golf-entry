@@ -63,6 +63,30 @@
   .pendbox{margin-bottom:14px}
   .pendbox .hint{font-size:12px; color:var(--muted); margin:0 0 8px}
 
+  /* ===== 未申込の詳細シート（下から出る） ===== */
+  .pname{padding:0; border:0; background:none; font:inherit; color:var(--green-d);
+        font-weight:700; text-decoration:underline; cursor:pointer}
+  .sheetwrap{position:fixed; inset:0; z-index:50}
+  .sheetbg{position:absolute; inset:0; background:rgba(0,0,0,.38)}
+  .sheet{position:absolute; left:0; right:0; bottom:0; max-height:86vh; overflow-y:auto;
+        background:#fff; border-radius:16px 16px 0 0;
+        padding:14px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+        box-shadow:0 -6px 24px rgba(0,0,0,.18)}
+  .sheet .shead{display:flex; align-items:flex-start; gap:10px; margin-bottom:8px}
+  .sheet .snm{font-size:17px; font-weight:700; line-height:1.35}
+  .sheet .skn{font-size:12px; color:var(--muted)}
+  .sheet .sx{margin-left:auto; flex:0 0 auto; width:34px; height:34px; line-height:1;
+        border:1px solid var(--line); border-radius:50%; background:#fff;
+        font-size:17px; color:var(--muted); cursor:pointer}
+  .srow{display:flex; gap:10px; padding:9px 0; border-top:1px solid var(--line); font-size:14px}
+  .srow .k{flex:0 0 96px; padding-top:2px; font-size:12px; color:var(--muted)}
+  .srow .v{flex:1; word-break:break-word}
+  .srow .v.none{color:var(--muted)}
+  .sheet a.tel{font-size:18px; font-weight:700; color:var(--green-d); text-decoration:none}
+  .sheet a.mail{color:var(--green-d); text-decoration:none; word-break:break-all}
+  .scopy{margin-top:7px; padding:7px 12px; font-size:13px; font-weight:600; color:var(--green-d);
+        background:#fff; border:1px solid var(--line); border-radius:8px; cursor:pointer}
+
   /* ===== 印刷用一覧 ===== */
   .pbtn{padding:10px 14px; font-size:14px; font-weight:600; color:var(--green-d); background:#fff;
         border:1px solid var(--line); border-radius:10px; cursor:pointer}
@@ -146,7 +170,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-10-07b';
+const BUILD = '2026-10-08a';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -568,6 +592,7 @@ function renderDash(res){
     + '<p class="sub" id="sub"></p>'
     + '<div id="pendBar"></div>'
     + '<div id="pendBox" hidden></div>'
+    + '<div id="pendSheet" hidden></div>'
     + '<div class="row"><select id="evsel" onchange="onEvent()"></select></div>'
     + '<div class="metrics">'
       + '<div class="metric"><div class="l">参加</div><div class="v" id="cJoin">0</div></div>'
@@ -669,6 +694,8 @@ function drawPend(){
   if(!bar || !box) return;
 
   const list = pendingAll();
+  pendCache = list;                 // 押されたときに引く。回を変えると作り直す
+  closePendSheet();                 // 並びが変わるので、開いていたシートは閉じる
   bar.className = 'pendbar' + (list.length ? '' : ' zero');
   bar.innerHTML = '未申込 <span class="n">' + list.length + '</span> 人'
     + (list.length ? '<span class="ar">' + (pendOpen ? '閉じる ▲' : '見る ▼') + '</span>' : '');
@@ -693,7 +720,8 @@ function drawPend(){
     + '</tr></thead><tbody>'
     + list.map(function(p, i){
         return '<tr><td class="num">' + (i + 1) + '</td>'
-          + '<td class="nw">' + escapeHtml(p.name) + '</td>'
+          + '<td class="nw"><button class="pname" onclick="openPend(' + i + ')">'
+            + escapeHtml(p.name) + '</button></td>'
           + '<td class="nw">第' + p.no + '回</td>'
           + '<td class="nw">' + (hasContact(p.row) ? 'あり' : 'なし') + '</td></tr>';
       }).join('')
@@ -701,6 +729,87 @@ function drawPend(){
 }
 
 function togglePend(){ pendOpen = !pendOpen; drawPend(); }
+
+/* ===== 未申込の詳細シート =====
+   値は list で既に取ってある行から出す。GAS は触っていない。
+   連絡先は「最後に参加された回」の行のもの（札の あり／なし と同じ行を見ている） */
+let pendCache = [];
+
+function telHref(v){ return 'tel:' + String(v||'').replace(/[^0-9+]/g, ''); }
+
+function srow(k, v, cls){
+  const none = !String(v||'').trim();
+  return '<div class="srow"><div class="k">' + escapeHtml(k) + '</div>'
+       + '<div class="v' + (none ? ' none' : (cls ? ' ' + cls : '')) + '">'
+       + (none ? '未登録' : v) + '</div></div>';
+}
+
+/* 最後に参加されたときの参加形態。会社参加なら会社名も添える */
+function joinedAs(r){
+  const c = String(r.company||'').trim();
+  const n = String(r.companyName||'').trim();
+  if(!c) return '';
+  return c === '会社参加' && n ? escapeHtml(c) + '（' + escapeHtml(n) + '）' : escapeHtml(c);
+}
+
+function openPend(i){
+  const p = pendCache[i];
+  const box = document.getElementById('pendSheet');
+  if(!p || !box) return;
+  const r = p.row;
+  const phone = String(r.phone||'').trim();
+  const email = String(r.email||'').trim();
+
+  box.className = 'sheetwrap';
+  box.innerHTML =
+      '<div class="sheetbg" onclick="closePendSheet()"></div>'
+    + '<div class="sheet" role="dialog" aria-modal="true">'
+      + '<div class="shead"><div>'
+        + '<div class="snm">' + escapeHtml(p.name) + '</div>'
+        + '<div class="skn">' + escapeHtml(r.kana||'') + '</div>'
+      + '</div><button class="sx" onclick="closePendSheet()" aria-label="閉じる">×</button></div>'
+      + srow('携帯', phone
+          ? '<a class="tel" href="' + escapeHtml(telHref(phone)) + '">' + escapeHtml(phone) + '</a>'
+            + '<div><button class="scopy" onclick="copyPhone(this, \'' + escapeHtml(phone) + '\')">コピー</button></div>'
+          : '')
+      + srow('メール', email
+          ? '<a class="mail" href="mailto:' + escapeHtml(email) + '">' + escapeHtml(email) + '</a>' : '')
+      + srow('LINE表示名', String(r.displayName||'').trim() ? 'あり' : 'なし')
+      + srow('最後の参加', '第' + p.no + '回'
+          + (joinedAs(r) ? '　' + joinedAs(r) : ''))
+      + srow('紹介者', escapeHtml(String(r.referrer||'').trim()))
+      + srow('備考', escapeHtml(String(r.note||'').trim()))
+    + '</div>';
+  box.hidden = false;
+}
+
+function closePendSheet(){
+  const box = document.getElementById('pendSheet');
+  if(!box) return;
+  box.hidden = true;
+  box.className = '';
+  box.innerHTML = '';
+}
+
+/* LINE の中のブラウザでは clipboard が使えないことがあるので、古いやり方も用意する */
+function copyPhone(btn, v){
+  const done = function(ok){ btn.textContent = ok ? 'コピーしました' : '長押しでコピーしてください';
+    setTimeout(function(){ btn.textContent = 'コピー'; }, 1800); };
+  try {
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(v).then(function(){ done(true); }, function(){ done(false); });
+      return;
+    }
+  } catch(e){}
+  try {
+    const t = document.createElement('textarea');
+    t.value = v; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(t);
+    done(ok);
+  } catch(e){ done(false); }
+}
 
 /* ============================================================
    印刷用一覧
