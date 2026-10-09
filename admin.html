@@ -62,6 +62,9 @@
   .pendbar.zero{color:var(--muted); background:#fff; border-color:var(--line); cursor:default}
   .pendbox{margin-bottom:14px}
   .pendbox .hint{font-size:12px; color:var(--muted); margin:0 0 8px}
+  /* 回の切替。札の中なので、上の絞り込みより少し小さくする */
+  .pendtabs{margin-bottom:10px}
+  .pendtabs .chip{padding:7px 0; font-size:13px}
 
   /* ===== 未申込の詳細シート（下から出る） ===== */
   .pname{padding:0; border:0; background:none; font:inherit; color:var(--green-d);
@@ -170,7 +173,7 @@ let token = '';
 const RELOGIN_KEY = 'tagocup.admin.relogin';
 /* 画面下に出す診断用。スクショ1枚で状況が分かるようにするため。
    BUILD は日付の版名（コミットの hash は自分自身には書けないので日付で代用） */
-const BUILD = '2026-10-08a';
+const BUILD = '2026-10-09a';
 const DIAG = { tok:'none', res:'', times:[], via:[] };
 let allRows = [];
 let curEvent = '';
@@ -650,6 +653,7 @@ function onSearch(v){ curQuery = (v||'').trim(); draw(); }
    GAS は触っていない。list で既に取ってある行だけで組んでいる
    ============================================================ */
 let pendOpen = false;
+let pendEvent = null;      // 一覧に出す「最後の参加回」。null なら一番新しい回
 
 function pendingAll(){
   const cur = Number(curEvent);
@@ -683,6 +687,16 @@ function pendingAll(){
   });
 }
 
+/* 「最後の参加回」ごとの人数。新しい回から並べる */
+function pendEvents(list){
+  const n = {}, order = [];
+  list.forEach(function(p){ if(!(p.no in n)){ n[p.no] = 0; order.push(p.no); } n[p.no]++; });
+  order.sort(function(a, b){ return b - a; });
+  return order.map(function(no){ return { no: no, count: n[no] }; });
+}
+
+function onPendEvent(no){ pendEvent = Number(no); drawPend(); }
+
 /* 連絡先は中身を出さず「あり／なし」だけ。この札は連絡を取る人を選ぶためのもの */
 function hasContact(r){
   return !!(String(r.phone||'').trim() || String(r.email||'').trim());
@@ -693,15 +707,23 @@ function drawPend(){
   const box = document.getElementById('pendBox');
   if(!bar || !box) return;
 
-  const list = pendingAll();
+  /* 札の人数は全体。タブはそれを「最後の参加回」で分けたもので、
+     タブの人数を足すと札の人数になる */
+  const all = pendingAll();
+  const evs = pendEvents(all);
+  if(!evs.some(function(e){ return e.no === pendEvent; })){
+    pendEvent = evs.length ? evs[0].no : null;      // 既定は一番新しい回
+  }
+  const list = all.filter(function(p){ return p.no === pendEvent; });
+
   pendCache = list;                 // 押されたときに引く。回を変えると作り直す
   closePendSheet();                 // 並びが変わるので、開いていたシートは閉じる
-  bar.className = 'pendbar' + (list.length ? '' : ' zero');
-  bar.innerHTML = '未申込 <span class="n">' + list.length + '</span> 人'
-    + (list.length ? '<span class="ar">' + (pendOpen ? '閉じる ▲' : '見る ▼') + '</span>' : '');
-  bar.onclick = list.length ? togglePend : null;
+  bar.className = 'pendbar' + (all.length ? '' : ' zero');
+  bar.innerHTML = '未申込 <span class="n">' + all.length + '</span> 人'
+    + (all.length ? '<span class="ar">' + (pendOpen ? '閉じる ▲' : '見る ▼') + '</span>' : '');
+  bar.onclick = all.length ? togglePend : null;
 
-  if(!list.length){
+  if(!all.length){
     pendOpen = false;
     box.hidden = true;
     box.innerHTML = '';
@@ -713,8 +735,15 @@ function drawPend(){
 
   box.innerHTML = '<div class="card pendbox">'
     + '<p class="hint">第' + curEvent + '回の返事がまだの、過去に参加された方です。'
-    + '新しい回に参加された方から並んでいます。姓名で突き合わせているので、'
+    + '最後に参加された回で分けています。姓名で突き合わせているので、'
     + '同姓同名の方は漏れることがあります</p>'
+    /* 過去の回が2つ以上あるときだけ切替を出す */
+    + (evs.length > 1
+        ? '<div class="chips pendtabs">' + evs.map(function(e){
+            return '<div class="chip' + (e.no === pendEvent ? ' on' : '') + '"'
+                 + ' onclick="onPendEvent(' + e.no + ')">第' + e.no + '回 ' + e.count + '人</div>';
+          }).join('') + '</div>'
+        : '')
     + '<table class="plist"><thead><tr>'
       + '<th class="num">#</th><th>氏名</th><th>最後の参加回</th><th>連絡先</th>'
     + '</tr></thead><tbody>'
