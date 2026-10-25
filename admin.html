@@ -44,6 +44,11 @@
   .meta{display:flex; justify-content:space-between; align-items:center; margin-top:10px}
   .meta a{font-size:14px; color:var(--green-d); text-decoration:none; font-weight:600}
   .meta .co{font-size:12px; color:var(--muted)}
+
+  /* ===== 一覧のカードを押すと出る詳細（もう一度押すと閉じる） ===== */
+  .card.tap{cursor:pointer}
+  .card .more{margin-top:10px; text-align:right; font-size:12px; color:var(--muted)}
+  .card .detwrap .srow:first-child{border-top:1px solid var(--line)}
   .note{text-align:center; color:var(--muted); padding:50px 10px}
   .setup{background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px 16px}
   .setup h2{font-size:16px; margin:0 0 10px}
@@ -763,6 +768,7 @@ function togglePend(){ pendOpen = !pendOpen; drawPend(); }
    値は list で既に取ってある行から出す。GAS は触っていない。
    連絡先は「最後に参加された回」の行のもの（札の あり／なし と同じ行を見ている） */
 let pendCache = [];
+let listCache = [];        // 一覧に出ている行。カードを押したときに引く
 
 function telHref(v){ return 'tel:' + String(v||'').replace(/[^0-9+]/g, ''); }
 
@@ -1031,12 +1037,13 @@ function draw(){
   if(curQuery) rows = rows.filter(function(r){ return ((r.name||'')+' '+(r.kana||'')).indexOf(curQuery)>-1; });
   rows.sort(function(a,b){ return String(a.kana||'').localeCompare(String(b.kana||''),'ja'); });
 
+  listCache = rows;                 // 押されたときに引く。絞り込みや並び替えのたびに作り直す
   document.getElementById('list').innerHTML = rows.length
     ? rows.map(card).join('')
     : '<div class="note">該当する人がいません。</div>';
 }
 
-function card(r){
+function card(r, i){
   const joinB = r.join==='参加する' ? '<span class="b b-join">参加</span>' : '<span class="b b-no">不参加</span>';
   const gB = r.gender==='男性' ? '<span class="b b-m">男性</span>' : (r.gender==='女性' ? '<span class="b b-f">女性</span>' : '');
   const fB = r.firstTime==='はい' ? '<span class="b b-first">初参加</span>' : '';
@@ -1045,13 +1052,89 @@ function card(r){
     ? '<span class="b b-age">' + escapeHtml(String(r.birth))
       + (age === null ? '' : '（' + age + '歳）') + '</span>'
     : '';
-  const tel = r.phone ? '<a href="tel:'+escapeHtml(r.phone)+'">'+escapeHtml(r.phone)+'</a>' : '<span class="co">―</span>';
+  /* 電話は押したらそのままかける。カードの開け閉めはさせない */
+  const tel = r.phone
+    ? '<a href="tel:'+escapeHtml(r.phone)+'" onclick="event.stopPropagation()">'+escapeHtml(r.phone)+'</a>'
+    : '<span class="co">―</span>';
   const co = r.company ? '<span class="co">'+escapeHtml(r.company)+'</span>' : '';
-  return '<div class="card">'
+  return '<div class="card tap" onclick="toggleCard('+i+')">'
     + '<div class="top"><div><div class="nm">'+escapeHtml(r.name||'')+'</div><div class="kn">'+escapeHtml(r.kana||'')+'</div></div>'+joinB+'</div>'
     + '<div class="badges">'+gB+fB+aB+'</div>'
     + '<div class="meta">'+tel+co+'</div>'
+    + '<div class="more" id="more'+i+'">詳細 ▼</div>'
+    + '<div class="detwrap" id="det'+i+'" hidden></div>'
     + '</div>';
+}
+
+/* ===== カードを押したときの詳細 =====
+   値は一覧で既に取ってある行から出す。GAS は触っていない。
+   もう一度押すと閉じる。中身は初めて開いたときだけ作る */
+function toggleCard(i){
+  const r = listCache[i];
+  const box = document.getElementById('det' + i);
+  const lab = document.getElementById('more' + i);
+  if(!r || !box) return;
+  const opening = box.hidden;
+  if(opening && !box.innerHTML) box.innerHTML = cardDetail(r);
+  box.hidden = !opening;
+  if(lab) lab.textContent = opening ? '閉じる ▲' : '詳細 ▼';
+}
+
+/* 会社参加／会社名。会社名だけ入っている行もあるので、その場合は会社名を出す */
+function companyText(r){
+  const c = String(r.company||'').trim();
+  const n = String(r.companyName||'').trim();
+  if(c && n) return escapeHtml(c) + '（' + escapeHtml(n) + '）';
+  return escapeHtml(c || n);
+}
+
+/* 申込日時。GAS が Date を返すことも ISO日時の文字列を返すこともある。
+   ISO日時は日本時間に直してから出す（生年月日と同じ扱い）。
+   「2026/10/02 0:00:00」のような形はそのまま出す */
+function tsText(v){
+  if(v === undefined || v === null) return '';
+  let d = null;
+  if(Object.prototype.toString.call(v) === '[object Date]'){
+    if(isNaN(v.getTime())) return '';
+    d = new Date(v.getTime() + 9 * 3600 * 1000);
+  } else {
+    const s = String(v).trim();
+    if(!s) return '';
+    if(!/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) return s;
+    const t = new Date(s);
+    if(isNaN(t.getTime())) return s;
+    d = new Date(t.getTime() + 9 * 3600 * 1000);
+  }
+  const p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return d.getUTCFullYear() + '/' + p(d.getUTCMonth() + 1) + '/' + p(d.getUTCDate())
+       + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+}
+
+/* 台帳の全項目。空の欄は srow が「未登録」と出す */
+function cardDetail(r){
+  const phone = String(r.phone||'').trim();
+  const email = String(r.email||'').trim();
+  const age = calcAge(r.birth);
+  return srow('姓名', escapeHtml(String(r.name||'').trim()))
+    + srow('フリガナ', escapeHtml(String(r.kana||'').trim()))
+    + srow('携帯', phone
+        ? '<a class="tel" href="' + escapeHtml(telHref(phone)) + '" onclick="event.stopPropagation()">'
+          + escapeHtml(phone) + '</a>' : '')
+    + srow('メール', email
+        ? '<a class="mail" href="mailto:' + escapeHtml(email) + '" onclick="event.stopPropagation()">'
+          + escapeHtml(email) + '</a>' : '')
+    + srow('参加の有無', escapeHtml(String(r.join||'').trim()))
+    + srow('生年月日', r.birth
+        ? escapeHtml(String(r.birth)) + (age === null ? '' : '（' + age + '歳）') : '')
+    + srow('初参加', escapeHtml(String(r.firstTime||'').trim()))
+    + srow('紹介者', escapeHtml(String(r.referrer||'').trim()))
+    + srow('会社参加', companyText(r))
+    + srow('領収書', escapeHtml(String(r.receipt||'').trim()))
+    + srow('備考', escapeHtml(String(r.note||'').trim()))
+    + srow('回', (r.eventNo === '' || r.eventNo == null) ? '' : '第' + escapeHtml(String(r.eventNo)) + '回')
+    + srow('性別', escapeHtml(String(r.gender||'').trim()))
+    + srow('LINE表示名', escapeHtml(String(r.displayName||'').trim()))
+    + srow('申込日時', escapeHtml(tsText(r.timestamp)));
 }
 
 function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
