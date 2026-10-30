@@ -110,13 +110,18 @@ async function main(){
   try {
     await liff.init({ liffId: LIFF_ID });
   } catch(e) {
-    /* LINE の外などで init ができないとき、受付前なら案内だけ出して終わる */
-    if(!ENTRY_OPEN){ renderClosed(); return; }
+    /* LINE の外などで init ができないとき、受付前なら案内だけ出して終わる。
+       ただし通過点（下の isPassThrough）のときは隠さず、いつもの失敗画面を出す */
+    if(!ENTRY_OPEN && !isPassThrough()){ renderClosed(); return; }
     throw e;
   }
 
-  /* 受付前はフォームを出さない。ログインも求めない（案内を読むだけで済む） */
-  if(!ENTRY_OPEN){ renderClosed(); return; }
+  /* 受付前はフォームを出さない。ログインも求めない（案内を読むだけで済む）。
+     ただし admin.html への通過点のときは何も描かない。liff.init の転送に任せる */
+  if(!ENTRY_OPEN){
+    if(!isPassThrough()) renderClosed();
+    return;
+  }
 
   if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
   profile = await liff.getProfile();
@@ -143,6 +148,14 @@ function addFriend(){
     if (window.liff && liff.openWindow) { liff.openWindow({ url: url, external: false }); return; }
   } catch (e) {}
   location.href = url;
+}
+
+/* この index.html が「通り道」として開かれたかどうか。
+   liff.line.me/<ID>/admin.html を開くと、まずここに
+   ?liff.state=%2Fadmin.html... の形で来る。LINEログインの戻りは code/state も付く。
+   このときは受付前の案内を出さず、liff.init の転送にそのまま任せる */
+function isPassThrough(){
+  return /[?&](liff\.state|liffRedirectUri|code)=/.test(location.search);
 }
 
 /* 受付前の画面。フォームも送信ボタンも出さない */
