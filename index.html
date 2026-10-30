@@ -101,11 +101,23 @@ let profile = { userId:'', displayName:'' };
 let isFriend = true;
 
 async function main(){
-  /* 受付前は LINE のログインも要らない。LINE の外で開かれても案内が出るように、
-     liff より先に返す */
+  /* ★liff.init は受付の開け閉めに関係なく必ず通す。
+     この LIFF の入口は golf-entry フォルダ（＝この index.html）なので、
+     liff.line.me/<ID>/admin.html を開いたときも、まずここに来て
+     liff.init が liff.state を読んで admin.html へ渡している。
+     ここを飛ばすと管理画面に入れなくなる（10/30 の不具合）。
+     受付前にフォームを出さないのは、init のあとで止めるだけでよい */
+  try {
+    await liff.init({ liffId: LIFF_ID });
+  } catch(e) {
+    /* LINE の外などで init ができないとき、受付前なら案内だけ出して終わる */
+    if(!ENTRY_OPEN){ renderClosed(); return; }
+    throw e;
+  }
+
+  /* 受付前はフォームを出さない。ログインも求めない（案内を読むだけで済む） */
   if(!ENTRY_OPEN){ renderClosed(); return; }
 
-  await liff.init({ liffId: LIFF_ID });
   if(!liff.isLoggedIn()){ liff.login({ redirectUri: window.location.href }); return; }
   profile = await liff.getProfile();
   document.querySelector('header p').textContent = '第' + EVENT_NO + '回 参加登録';
